@@ -239,7 +239,8 @@ fn enemy_move(
             // Push apart from overlapping neighbours. Heavy enemies barely move.
             let mut push = Vec2::ZERO;
             grid.for_each_near(pos, en.radius + 30.0, |o| {
-                if o.entity == entity {
+                // Bosses plow through their own army instead of getting stuck in it.
+                if o.entity == entity || (en.kind.is_boss() && o.radius < 50.0) {
                     return;
                 }
                 let d = pos - o.pos;
