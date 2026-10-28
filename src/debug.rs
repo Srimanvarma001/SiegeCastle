@@ -6,6 +6,8 @@
 //! - `SIEGE_EXIT_AFTER=180`    quit after this many seconds of play
 //! - `SIEGE_SPEED=3`           run the game clock faster
 //! - `SIEGE_LOG=1`             print a status line every 5 seconds
+//! - `SIEGE_START_WAVE=10`    jump straight to a wave (castle starts fully grown)
+//! - `SIEGE_GOD=1`             castle cannot be destroyed
 //!
 //! F12 always saves a screenshot.
 
@@ -32,13 +34,15 @@ impl Plugin for DebugPlugin {
             log: env("SIEGE_LOG").is_some(),
             next_log: 0.0,
             manual_shots: 0,
+            start_wave: env("SIEGE_START_WAVE").and_then(|v| v.parse().ok()),
+            god: env("SIEGE_GOD").is_some(),
         };
         if env("SIEGE_AUTOPILOT").is_some() {
             app.insert_resource(Autopilot);
         }
         app.insert_resource(cfg)
             .add_systems(Startup, apply_speed)
-            .add_systems(Update, (debug_tick, exit_soon));
+            .add_systems(Update, (debug_tick, exit_soon, cheats.run_if(in_state(GameState::Playing))));
     }
 }
 
@@ -69,6 +73,8 @@ struct DebugConfig {
     log: bool,
     next_log: f32,
     manual_shots: u32,
+    start_wave: Option<u32>,
+    god: bool,
 }
 
 fn apply_speed(cfg: Res<DebugConfig>, mut time: ResMut<Time<Virtual>>) {
@@ -155,5 +161,27 @@ fn exit_soon(mut commands: Commands, soon: Option<ResMut<ExitSoon>>, mut exit: M
         commands.remove_resource::<ExitSoon>();
     } else {
         s.0 -= 1;
+    }
+}
+
+/// Test-only shortcuts: jump to a wave and/or make the castle unbreakable.
+fn cheats(
+    cfg: Res<DebugConfig>,
+    stats: Res<RunStats>,
+    mut waves: ResMut<WaveDirector>,
+    mut castle: Query<&mut Castle>,
+) {
+    let Ok(mut c) = castle.single_mut() else {
+        return;
+    };
+    if let Some(w) = cfg.start_wave
+        && waves.wave == 0
+        && stats.time < 1.0
+    {
+        waves.wave = w.saturating_sub(1);
+        c.xp = c.xp.max(2000);
+    }
+    if cfg.god {
+        c.hp = c.def().max_hp;
     }
 }

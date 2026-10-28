@@ -36,9 +36,9 @@ sudo apt install pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcomm
 
 | Stage | Walls | Towers | XP needed |
 |---|---|---|---|
-| 1. Wooden Keep | 250 | 2 archers | start |
-| 2. Stone Fort | 600 | 2 archers, 2 cannons | 120 |
-| 3. Grand Citadel | 1400 | 4 archers, 2 cannons, 2 mage towers | 600 |
+| 1. Wooden Keep | 250 | 3 archers | start |
+| 2. Stone Fort | 600 | 2 archers, 2 cannons | 100 |
+| 3. Grand Citadel | 1400 | 4 archers, 2 cannons, 2 mage towers | 650 |
 
 **Towers**
 - **Archer**: fast arrows, single target
@@ -94,5 +94,7 @@ SIEGE_AUTOPILOT=1 SIEGE_LOG=1 SIEGE_SHOTS=30,120 SIEGE_EXIT_AFTER=150 cargo run 
 - `SIEGE_EXIT_AFTER=150`: quit after this many seconds
 - `SIEGE_SPEED=2`: run the game clock faster
 - `SIEGE_LOG=1`: print a status line every 5 seconds
+- `SIEGE_START_WAVE=10`: jump straight to a wave (castle starts fully grown)
+- `SIEGE_GOD=1`: castle cannot be destroyed
 
 Inspired by the "castle on wheels" idea from Wanderburg. All code and art in this project are original.

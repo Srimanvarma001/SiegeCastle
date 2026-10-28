@@ -110,7 +110,7 @@ pub const STAGES: [StageDef; 3] = [
         max_hp: 600.0,
         radius: 70.0,
         speed: 225.0,
-        xp_next: Some(500),
+        xp_next: Some(650),
         cam_scale: 1.35,
         magnet: 340.0,
         barrage_shots: 24,
