@@ -45,11 +45,11 @@ pub struct EnemyStats {
 impl EnemyKind {
     pub fn stats(self) -> EnemyStats {
         let (hp, speed, radius, dps, xp) = match self {
-            EnemyKind::Raider => (22.0, 150.0, 10.0, 10.0, 1),
-            EnemyKind::Knight => (70.0, 105.0, 14.0, 18.0, 3),
-            EnemyKind::Ram => (260.0, 75.0, 20.0, 45.0, 10),
-            EnemyKind::RivalCastle => (3000.0, 62.0, 55.0, 80.0, 80),
-            EnemyKind::Warlord => (12000.0, 52.0, 85.0, 150.0, 0),
+            EnemyKind::Raider => (22.0, 150.0, 10.0, 4.0, 1),
+            EnemyKind::Knight => (70.0, 105.0, 14.0, 8.0, 3),
+            EnemyKind::Ram => (260.0, 75.0, 20.0, 20.0, 10),
+            EnemyKind::RivalCastle => (3000.0, 62.0, 55.0, 40.0, 80),
+            EnemyKind::Warlord => (12000.0, 52.0, 85.0, 70.0, 0),
         };
         EnemyStats { hp, speed, radius, dps, xp }
     }

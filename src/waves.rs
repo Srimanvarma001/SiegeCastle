@@ -66,7 +66,7 @@ impl WaveDirector {
     /// Enemies spawned per second for a wave.
     fn rate(wave: u32) -> f32 {
         let w = wave as f32;
-        1.5 + w.powf(1.5) * 1.2
+        1.0 + w.powf(1.6) * 0.9
     }
 }
 
@@ -177,9 +177,9 @@ fn run_waves(
 
             // Every so often a big horde rushes in from a single side.
             d.horde_timer -= dt;
-            if d.horde_timer <= 0.0 && wave >= 2 {
+            if d.horde_timer <= 0.0 && wave >= 3 {
                 d.horde_timer = 14.0;
-                let count = (20 + wave * 12).min(budget as u32);
+                let count = (10 + wave * 10).min(budget as u32);
                 let a = rng.0.random::<f32>() * std::f32::consts::TAU;
                 for _ in 0..count {
                     let spread = (rng.0.random::<f32>() - 0.5) * 0.6;

@@ -112,8 +112,8 @@ fn debug_tick(
     }
     let ended = matches!(state.get(), GameState::GameOver | GameState::Victory);
 
-    if cfg.log && (t >= cfg.next_log || ended) {
-        cfg.next_log = t + 5.0;
+    if cfg.log && (t >= cfg.next_log || (ended && cfg.next_log < f32::MAX)) {
+        cfg.next_log = if ended { f32::MAX } else { t + 5.0 };
         if let Ok(c) = castle.single() {
             let fps = diagnostics
                 .get(&FrameTimeDiagnosticsPlugin::FPS)
@@ -136,7 +136,7 @@ fn debug_tick(
     }
 
     if let Some(limit) = cfg.exit_after
-        && (t >= limit || (ended && cfg.shots.is_empty()))
+        && (t >= limit || ended)
     {
         // Give the last screenshot a moment to save.
         cfg.exit_after = None;

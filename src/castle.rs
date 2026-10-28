@@ -47,7 +47,7 @@ impl TowerKind {
     pub fn stats(self) -> TowerStats {
         match self {
             TowerKind::Archer => TowerStats {
-                cooldown: 0.38,
+                cooldown: 0.3,
                 damage: 11.0,
                 range: 430.0,
                 speed: 950.0,
@@ -99,9 +99,9 @@ pub const STAGES: [StageDef; 3] = [
         max_hp: 250.0,
         radius: 40.0,
         speed: 240.0,
-        xp_next: Some(120),
+        xp_next: Some(100),
         cam_scale: 1.0,
-        magnet: 130.0,
+        magnet: 260.0,
         barrage_shots: 16,
         damage_mult: 1.0,
     },
@@ -110,9 +110,9 @@ pub const STAGES: [StageDef; 3] = [
         max_hp: 600.0,
         radius: 70.0,
         speed: 225.0,
-        xp_next: Some(600),
+        xp_next: Some(500),
         cam_scale: 1.35,
-        magnet: 170.0,
+        magnet: 340.0,
         barrage_shots: 24,
         damage_mult: 1.25,
     },
@@ -123,7 +123,7 @@ pub const STAGES: [StageDef; 3] = [
         speed: 210.0,
         xp_next: None,
         cam_scale: 1.75,
-        magnet: 220.0,
+        magnet: 440.0,
         barrage_shots: 36,
         damage_mult: 1.6,
     },
@@ -208,6 +208,7 @@ fn build_castle(p: &mut ChildSpawnerCommands, a: &GameAssets, stage: usize) {
             p.spawn(shape(sq, &m.gold, Vec3::new(36.0, 0.0, 0.2), Vec2::new(8.0, 16.0)));
             tower(p, TowerKind::Archer, -8.0, 30.0, 24.0);
             tower(p, TowerKind::Archer, -8.0, -30.0, 24.0);
+            tower(p, TowerKind::Archer, -30.0, 0.0, 22.0);
         }
         1 => {
             wheels(p, &[-40.0, 0.0, 40.0], 58.0, 24.0, 12.0);
