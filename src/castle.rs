@@ -3,7 +3,7 @@
 use crate::assets::{GameAssets, shape};
 use crate::combat::{Projectile, spawn_burst};
 use crate::debug::Autopilot;
-use crate::enemy::Enemy;
+use crate::enemy::{Boss, Enemy};
 use crate::grid::Grid;
 use crate::{Banner, GameEntity, GameRng, GameState, MAP_HALF, Shake, Sim};
 use bevy::prelude::*;
@@ -337,6 +337,7 @@ pub(crate) fn towers_fire(
     grid: Res<Grid>,
     assets: Res<GameAssets>,
     castle: Query<&Castle>,
+    bosses: Query<(Entity, &Transform, &Enemy), With<Boss>>,
     mut towers: Query<(&GlobalTransform, &mut Tower)>,
 ) {
     let Ok(c) = castle.single() else {
@@ -351,13 +352,32 @@ pub(crate) fn towers_fire(
         }
         let s = tower.kind.stats();
         let pos = gtf.translation().truncate();
-        let Some(target) = grid.nearest(pos, s.range) else {
+
+        // Cannons and mages go for a boss first when one is in range.
+        let boss = (tower.kind != TowerKind::Archer)
+            .then(|| {
+                bosses.iter().find(|(_, tf, en)| {
+                    tf.translation.truncate().distance(pos) < s.range + en.radius && en.hp > 0.0
+                })
+            })
+            .flatten()
+            .map(|(e, tf, _)| (e, tf.translation.truncate()));
+        let target = match boss {
+            Some((e, p)) => Some((Some(e), p)),
+            None => grid.nearest(pos, s.range).map(|g| (None, g.pos)),
+        };
+        let Some((boss_target, target_pos)) = target else {
             tower.timer = 0.05;
             continue;
         };
         tower.timer = s.cooldown;
-        let dir = (target.pos - pos).normalize_or(Vec2::X);
-        let life = (s.range + 80.0) / s.speed;
+        let dir = (target_pos - pos).normalize_or(Vec2::X);
+        let lobbed = tower.kind == TowerKind::Cannon;
+        let life = if lobbed {
+            target_pos.distance(pos) / s.speed
+        } else {
+            (s.range + 80.0) / s.speed
+        };
         let (mat, size) = match tower.kind {
             TowerKind::Archer => (&assets.m.arrow, Vec2::new(18.0, 4.0)),
             TowerKind::Cannon => (&assets.m.cannonball, Vec2::splat(14.0)),
@@ -370,11 +390,10 @@ pub(crate) fn towers_fire(
         };
         let mut t = shape(mesh, mat, pos.extend(6.0), size);
         t.2.rotation = Quat::from_rotation_z(dir.to_angle());
-        commands.spawn((
-            GameEntity,
-            Projectile::new(dir * s.speed, s.damage * mult, s.radius, s.splash, s.pierce, life),
-            t,
-        ));
+        let mut proj = Projectile::new(dir * s.speed, s.damage * mult, s.radius, s.splash, s.pierce, life);
+        proj.lobbed = lobbed;
+        proj.only = boss_target;
+        commands.spawn((GameEntity, proj, t));
     }
 }
 

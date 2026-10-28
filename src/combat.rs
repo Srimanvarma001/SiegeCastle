@@ -41,12 +41,16 @@ pub struct Projectile {
     /// How many extra enemies it can pass through.
     pub pierce: u32,
     pub life: f32,
+    /// Flies over everything and explodes where it lands (cannon shells).
+    pub lobbed: bool,
+    /// Only this enemy can be hit (shots aimed at a boss pass through the swarm).
+    pub only: Option<Entity>,
     hits: Vec<Entity>,
 }
 
 impl Projectile {
     pub fn new(vel: Vec2, damage: f32, radius: f32, splash: f32, pierce: u32, life: f32) -> Self {
-        Self { vel, damage, radius, splash, pierce, life, hits: Vec::new() }
+        Self { vel, damage, radius, splash, pierce, life, lobbed: false, only: None, hits: Vec::new() }
     }
 }
 
@@ -128,10 +132,11 @@ fn move_projectiles(
         let substeps = (step.length() / (p.radius + 8.0)).ceil().clamp(1.0, 16.0) as u32;
         let mut hit = None;
         let mut pos = start + step;
-        for i in 1..=substeps {
+        let only = p.only;
+        for i in (1..=substeps).filter(|_| !p.lobbed) {
             let at = start + step * (i as f32 / substeps as f32);
             grid.for_each_near(at, p.radius + MAX_ENEMY_RADIUS, |g| {
-                if hit.is_some() || p.hits.contains(&g.entity) {
+                if hit.is_some() || p.hits.contains(&g.entity) || only.is_some_and(|o| o != g.entity) {
                     return;
                 }
                 let reach = p.radius + g.radius;

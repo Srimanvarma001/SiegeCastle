@@ -13,7 +13,9 @@ pub struct EnemyPlugin;
 
 impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, enemy_move.in_set(Sim::Move))
+        app.add_systems(OnEnter(crate::GameState::Starting), spawn_boss_pointer)
+            .add_systems(Update, boss_pointer.in_set(Sim::Resolve))
+            .add_systems(Update, enemy_move.in_set(Sim::Move))
             .add_systems(Update, boss_shoot.in_set(Sim::Combat))
             .add_systems(Update, boss_bars.in_set(Sim::Resolve));
     }
@@ -49,7 +51,7 @@ impl EnemyKind {
             EnemyKind::Knight => (70.0, 105.0, 14.0, 8.0, 3),
             EnemyKind::Ram => (260.0, 75.0, 20.0, 20.0, 10),
             EnemyKind::RivalCastle => (3000.0, 62.0, 55.0, 40.0, 80),
-            EnemyKind::Warlord => (12000.0, 52.0, 85.0, 70.0, 0),
+            EnemyKind::Warlord => (8000.0, 52.0, 85.0, 70.0, 0),
         };
         EnemyStats { hp, speed, radius, dps, xp }
     }
@@ -330,5 +332,43 @@ fn boss_bars(
                 tf.translation.x = -bar.width * (1.0 - frac) / 2.0;
             }
         }
+    }
+}
+
+/// Red arrow at the edge of the castle pointing to the nearest boss.
+#[derive(Component)]
+struct BossPointer;
+
+fn spawn_boss_pointer(mut commands: Commands, assets: Res<GameAssets>) {
+    commands.spawn((
+        GameEntity,
+        BossPointer,
+        Visibility::Hidden,
+        shape(&assets.diamond, &assets.m.bar_fill, Vec3::new(0.0, 0.0, 8.0), Vec2::new(34.0, 16.0)),
+    ));
+}
+
+fn boss_pointer(
+    castle: Query<(&Transform, &Castle), Without<BossPointer>>,
+    bosses: Query<&Transform, (With<Boss>, Without<BossPointer>)>,
+    mut pointer: Query<(&mut Transform, &mut Visibility), With<BossPointer>>,
+) {
+    let (Ok((ctf, c)), Ok((mut tf, mut vis))) = (castle.single(), pointer.single_mut()) else {
+        return;
+    };
+    let cpos = ctf.translation.truncate();
+    let nearest = bosses
+        .iter()
+        .map(|t| t.translation.truncate())
+        .min_by(|a, b| a.distance_squared(cpos).total_cmp(&b.distance_squared(cpos)));
+    match nearest {
+        Some(b) if b.distance(cpos) > c.radius + 500.0 => {
+            let dir = (b - cpos).normalize_or(Vec2::X);
+            let p = cpos + dir * (c.radius + 45.0);
+            tf.translation = p.extend(8.0);
+            tf.rotation = Quat::from_rotation_z(dir.to_angle());
+            *vis = Visibility::Visible;
+        }
+        _ => *vis = Visibility::Hidden,
     }
 }

@@ -42,7 +42,7 @@ sudo apt install pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcomm
 
 **Towers**
 - **Archer**: fast arrows, single target
-- **Cannon**: slow, explodes and hits a whole area
+- **Cannon**: slow, shells arc over enemies and explode over a whole area
 - **Mage**: magic bolts that pass through up to 5 enemies
 
 **Enemies come in 10 waves, and the map fills up.** Each wave lasts 40 seconds with a short break between. Enemies that survive stay on the map, so the swarm keeps growing. Each wave spawns faster and gives enemies more health. Groups attack from one direction at a time, and big hordes rush in from a single side.
@@ -54,6 +54,8 @@ sudo apt install pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcomm
 | Battering Ram (brown) | wave 4 | slow, very tough, hits walls hard |
 | Rival Castle (boss) | waves 5 and 8 | shoots back, drops lots of XP |
 | Warlord's Citadel (final boss) | wave 10 | destroy it to win |
+
+A red arrow next to your castle points to the nearest boss. Cannon and mage towers aim at bosses first: cannon shells arc over the crowd, and magic bolts aimed at a boss pass through the swarm.
 
 ## Why it is fast
 
