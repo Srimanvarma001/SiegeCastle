@@ -3,6 +3,9 @@
 //! One map, one castle that grows through 3 stages, and enemy waves that keep
 //! getting bigger until the Warlord's citadel arrives.
 
+// Bevy systems naturally take many parameters and long query types.
+#![allow(clippy::too_many_arguments, clippy::type_complexity)]
+
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::*;
 use bevy::window::{PresentMode, WindowResolution};
