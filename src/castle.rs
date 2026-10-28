@@ -247,6 +247,7 @@ fn castle_move(
     keys: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
     autopilot: Option<Res<Autopilot>>,
+    bosses: Query<&Transform, (With<Boss>, Without<Castle>)>,
     mut q: Query<(&mut Transform, &mut Castle)>,
 ) {
     let Ok((mut tf, mut c)) = q.single_mut() else {
@@ -269,7 +270,11 @@ fn castle_move(
         dir.x += 1.0;
     }
     if let Some(ap) = autopilot {
-        dir = ap.direction(pos);
+        let boss = bosses
+            .iter()
+            .map(|t| t.translation.truncate())
+            .min_by(|a, b| a.distance_squared(pos).total_cmp(&b.distance_squared(pos)));
+        dir = ap.direction(pos, boss);
     }
 
     // Heavy, vehicle-like feel: velocity eases toward the target.

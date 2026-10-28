@@ -51,7 +51,7 @@ impl EnemyKind {
             EnemyKind::Knight => (70.0, 105.0, 14.0, 8.0, 3),
             EnemyKind::Ram => (260.0, 75.0, 20.0, 20.0, 10),
             EnemyKind::RivalCastle => (3000.0, 62.0, 55.0, 40.0, 80),
-            EnemyKind::Warlord => (8000.0, 52.0, 85.0, 70.0, 0),
+            EnemyKind::Warlord => (6000.0, 52.0, 85.0, 70.0, 0),
         };
         EnemyStats { hp, speed, radius, dps, xp }
     }
@@ -98,7 +98,8 @@ pub fn spawn_enemy(
 ) {
     let s = kind.stats();
     let w = wave.saturating_sub(1) as f32;
-    let hp = s.hp * (1.0 + 0.15 * w);
+    // Boss health is tuned by hand, so only regular enemies scale with the wave.
+    let hp = if kind.is_boss() { s.hp } else { s.hp * (1.0 + 0.15 * w) };
     let speed = s.speed * (1.0 + 0.02 * w);
     let m = &assets.m;
     let base_mat = match kind {

@@ -12,7 +12,7 @@
 //! F12 always saves a screenshot.
 
 use crate::castle::Castle;
-use crate::enemy::Enemy;
+use crate::enemy::{Boss, Enemy};
 use crate::waves::WaveDirector;
 use crate::{GameState, RunStats};
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
@@ -55,11 +55,15 @@ struct ExitSoon(u32);
 pub struct Autopilot;
 
 impl Autopilot {
-    /// Circle the map center at a fixed distance, kiting the swarm.
-    pub fn direction(&self, pos: Vec2) -> Vec2 {
-        let radius = 1100.0;
-        let tangent = Vec2::new(-pos.y, pos.x).normalize_or(Vec2::X);
-        let inward = -pos.normalize_or(Vec2::X) * ((pos.length() - radius) / 300.0).clamp(-1.0, 1.0);
+    /// Circle the map center (or a boss, if one is out) at a fixed distance, kiting the swarm.
+    pub fn direction(&self, pos: Vec2, boss: Option<Vec2>) -> Vec2 {
+        let (center, radius) = match boss {
+            Some(b) => (b, 420.0),
+            None => (Vec2::ZERO, 1100.0),
+        };
+        let rel = pos - center;
+        let tangent = Vec2::new(-rel.y, rel.x).normalize_or(Vec2::X);
+        let inward = -rel.normalize_or(Vec2::X) * ((rel.length() - radius) / 300.0).clamp(-1.0, 1.0);
         (tangent + inward).normalize_or(Vec2::X)
     }
 }
@@ -93,8 +97,9 @@ fn debug_tick(
     state: Res<State<GameState>>,
     waves: Res<WaveDirector>,
     diagnostics: Res<DiagnosticsStore>,
-    castle: Query<&Castle>,
+    castle: Query<(&Transform, &Castle)>,
     enemies: Query<(), With<Enemy>>,
+    bosses: Query<(&Transform, &Enemy), With<Boss>>,
     mut cfg: ResMut<DebugConfig>,
 ) {
     let t = stats.time;
@@ -120,13 +125,17 @@ fn debug_tick(
 
     if cfg.log && (t >= cfg.next_log || (ended && cfg.next_log < f32::MAX)) {
         cfg.next_log = if ended { f32::MAX } else { t + 5.0 };
-        if let Ok(c) = castle.single() {
+        if let Ok((ctf, c)) = castle.single() {
+            let boss_info: Vec<String> = bosses
+                .iter()
+                .map(|(t, e)| format!("{:?} hp={:.0} dist={:.0}", e.kind, e.hp, t.translation.distance(ctf.translation)))
+                .collect();
             let fps = diagnostics
                 .get(&FrameTimeDiagnosticsPlugin::FPS)
                 .and_then(|d| d.smoothed())
                 .unwrap_or(0.0);
             info!(
-                "t={:>5.0}s state={:?} wave={} stage={} hp={:.0}/{:.0} xp={} enemies={} kills={} fps={:.0}",
+                "t={:>5.0}s state={:?} wave={} stage={} hp={:.0}/{:.0} xp={} enemies={} kills={} fps={:.0} bosses={:?}",
                 t,
                 state.get(),
                 waves.wave,
@@ -136,7 +145,8 @@ fn debug_tick(
                 c.xp,
                 enemies.iter().count(),
                 stats.kills,
-                fps
+                fps,
+                boss_info
             );
         }
     }
