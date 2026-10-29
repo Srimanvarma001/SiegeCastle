@@ -436,9 +436,12 @@ fn animate_rigs(
                     off = rot * Vec3::new(-p.recoil[0] * part.k, 0.0, 0.0);
                 }
             }
-            tf.translation = rest.translation + off;
-            tf.rotation = rest.rotation * rot;
-            tf.scale = scale;
+            // Only write when the pose changed: a written transform makes Bevy
+            // recompute the part and every mesh under it, even if nothing moved.
+            let want = Transform { translation: rest.translation + off, rotation: rest.rotation * rot, scale };
+            if *tf != want {
+                *tf = want;
+            }
         }
     }
 }
