@@ -30,10 +30,18 @@ pub enum Mat {
     Leaf,
     /// Vertex-colored, two-sided (flags and banners).
     Cloth,
+    /// Leaf, needle and grass cards from the foliage atlas (cut-out, two-sided).
+    Foliage,
+    Bark,
+    /// Polished cast bronze (cannons, spyglass).
+    Bronze,
 }
 
 impl Mat {
-    pub const ALL: [Mat; 11] = [
+    pub const ALL: [Mat; 14] = [
+        Mat::Foliage,
+        Mat::Bark,
+        Mat::Bronze,
         Mat::Stone,
         Mat::Slate,
         Mat::Wood,
@@ -55,6 +63,7 @@ impl Mat {
             Mat::Iron => Some(Surface::Iron),
             Mat::Plaster => Some(Surface::Plaster),
             Mat::Wheat => Some(Surface::Wheat),
+            Mat::Bark => Some(Surface::Bark),
             _ => None,
         }
     }
@@ -276,6 +285,43 @@ impl Model {
         }
     }
 
+    /// A flat card (quad) around `center`, spanning `right` and `up` (half extents),
+    /// textured with an atlas region. Normals point away from `light_from`
+    /// when given, which makes leafy crowns shade softly like a whole canopy.
+    #[allow(clippy::too_many_arguments)]
+    pub fn card(&mut self, mat: Mat, center: Vec3, right: Vec3, up: Vec3, uv_min: Vec2, uv_max: Vec2, color: Color, light_from: Option<Vec3>) {
+        let c = lin(color);
+        let flat = right.cross(up).normalize_or(Vec3::Y);
+        let corners = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
+        let part = self.part(mat);
+        let start = part.pos.len() as u32;
+        for (a, b) in corners {
+            let p = center + right * a + up * b;
+            let n = match light_from {
+                Some(o) => ((p - o).normalize_or(Vec3::Y) + Vec3::Y * 0.35).normalize(),
+                None => flat,
+            };
+            let uv = Vec2::new(if a < 0.0 { uv_min.x } else { uv_max.x }, if b < 0.0 { uv_max.y } else { uv_min.y });
+            part.vert(p, n, uv, c);
+        }
+        part.idx.extend_from_slice(&[start, start + 1, start + 2, start, start + 2, start + 3]);
+    }
+
+    /// Adds another model's geometry, moved by `tf`.
+    pub fn append(&mut self, other: Model, tf: Transform) {
+        for (mat, src) in other.parts {
+            let part = self.part(mat);
+            let off = part.pos.len() as u32;
+            for i in 0..src.pos.len() {
+                part.pos.push(tf.transform_point(Vec3::from_array(src.pos[i])).to_array());
+                part.nrm.push((tf.rotation * Vec3::from_array(src.nrm[i])).to_array());
+                part.uv.push(src.uv[i]);
+                part.col.push(src.col[i]);
+            }
+            part.idx.extend(src.idx.iter().map(|i| i + off));
+        }
+    }
+
     /// One mesh per material, ready to upload.
     pub fn build(self) -> Vec<(Mat, Mesh)> {
         let mut out: Vec<(Mat, Mesh)> = Vec::new();
@@ -319,6 +365,31 @@ impl Model {
             .with_inserted_indices(Indices::U32(all.idx))
     }
 }
+
+/// Tiny deterministic random numbers for placing leaves and props.
+pub struct Rand(pub u32);
+
+impl Rand {
+    pub fn f(&mut self) -> f32 {
+        self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (self.0 >> 8) as f32 / 16_777_216.0
+    }
+    pub fn range(&mut self, a: f32, b: f32) -> f32 {
+        a + (b - a) * self.f()
+    }
+    pub fn dir(&mut self) -> Vec3 {
+        let z = self.range(-1.0, 1.0);
+        let a = self.range(0.0, TAU);
+        let r = (1.0 - z * z).sqrt();
+        Vec3::new(r * a.cos(), z, r * a.sin())
+    }
+}
+
+/// Atlas cells in the foliage texture.
+const LEAF_A: (Vec2, Vec2) = (Vec2::new(0.0, 0.0), Vec2::new(0.5, 0.5));
+const LEAF_B: (Vec2, Vec2) = (Vec2::new(0.5, 0.0), Vec2::new(1.0, 0.5));
+const FIR: (Vec2, Vec2) = (Vec2::new(0.0, 0.5), Vec2::new(0.5, 1.0));
+const GRASS: (Vec2, Vec2) = (Vec2::new(0.5, 0.5), Vec2::new(1.0, 1.0));
 
 fn hash3(x: i32, y: i32, z: i32, seed: u32) -> f32 {
     let mut h = (x as u32).wrapping_mul(0x8da6_b343) ^ (y as u32).wrapping_mul(0xd816_3841) ^ (z as u32).wrapping_mul(0xcb1a_b31f) ^ seed.wrapping_mul(0x1656_67b1);
@@ -677,53 +748,310 @@ pub fn castle(stage: usize, variant: Variant) -> Model {
     m
 }
 
+/// Spoked wooden wheel with an iron tire; axle along Z.
+fn spoked_wheel(m: &mut Model, center: Vec3, r: f32, w: f32) {
+    let n = 14;
+    for i in 0..n {
+        let a = i as f32 / n as f32 * TAU;
+        let p = center + Vec3::new(a.cos(), a.sin(), 0.0) * (r * 0.9);
+        let rot = Quat::from_rotation_z(a + FRAC_PI_2);
+        let seg = TAU * r * 0.9 / n as f32 * 1.08;
+        m.cube(Mat::Wood, Vec3::new(seg, r * 0.16, w), p, rot, W);
+        m.cube(Mat::Iron, Vec3::new(seg, r * 0.05, w * 1.05), center + Vec3::new(a.cos(), a.sin(), 0.0) * (r * 1.0), rot, W);
+    }
+    for i in 0..8 {
+        let a = i as f32 / 8.0 * TAU;
+        let rot = Quat::from_rotation_z(a - FRAC_PI_2);
+        m.frustum_rot(Mat::Wood, center, rot, r * 0.07, r * 0.05, r * 0.85, 5, W, true, false);
+    }
+    m.frustum_rot(Mat::Iron, center - Vec3::Z * (w * 0.9), Quat::from_rotation_x(FRAC_PI_2), r * 0.18, r * 0.16, w * 1.8, 10, W, true, true);
+}
+
+/// An archer drawing a longbow, facing +X.
+fn archer_figure(m: &mut Model, tunic: Color, hood: Color) {
+    let p = Mat::Paint;
+    for z in [-0.11f32, 0.11] {
+        m.frustum(p, Vec3::new(0.0, 0.0, z), 0.09, 0.08, 0.6, 7, rgb(0.20, 0.17, 0.14), true);
+        m.blob(p, Vec3::new(0.05, 0.05, z), 0.09, Vec3::new(1.5, 0.6, 1.0), leather(), 0.0, 1, 1);
+    }
+    m.frustum(p, Vec3::new(0.0, 0.5, 0.0), 0.28, 0.23, 0.68, 10, tunic, true);
+    m.frustum(p, Vec3::new(0.0, 0.8, 0.0), 0.255, 0.255, 0.07, 10, leather(), true);
+    m.frustum(p, Vec3::new(0.0, 1.18, 0.0), 0.07, 0.07, 0.1, 6, skin(), true);
+    m.blob(p, Vec3::new(0.0, 1.38, 0.0), 0.15, Vec3::new(1.0, 1.1, 0.95), skin(), 0.02, 3, 2);
+    m.blob(p, Vec3::new(-0.03, 1.42, 0.0), 0.18, Vec3::new(1.05, 1.0, 1.0), hood, 0.03, 6, 2);
+    m.frustum(p, Vec3::new(0.0, 1.05, 0.0), 0.26, 0.12, 0.2, 10, hood, true);
+    // Bow arm straight out, draw arm pulled back to the cheek.
+    let shoulder_l = Vec3::new(0.0, 1.12, -0.24);
+    let shoulder_r = Vec3::new(0.0, 1.12, 0.24);
+    let bow_hand = Vec3::new(0.6, 1.2, -0.12);
+    m.frustum_rot(p, shoulder_l, Quat::from_rotation_arc(Vec3::Y, (bow_hand - shoulder_l).normalize()), 0.065, 0.055, (bow_hand - shoulder_l).length(), 6, tunic, true, false);
+    let draw_hand = Vec3::new(0.12, 1.32, 0.08);
+    m.frustum_rot(p, shoulder_r, Quat::from_rotation_arc(Vec3::Y, (draw_hand - shoulder_r).normalize()), 0.065, 0.055, (draw_hand - shoulder_r).length(), 6, tunic, true, false);
+    for dir in [Vec3::new(-0.3, 1.0, 0.05), Vec3::new(-0.3, -1.0, 0.05)] {
+        m.frustum_rot(p, bow_hand, Quat::from_rotation_arc(Vec3::Y, dir.normalize()), 0.03, 0.015, 0.72, 5, timber(), true, false);
+    }
+    let tip_up = bow_hand + Vec3::new(-0.3, 1.0, 0.05).normalize() * 0.72;
+    let tip_dn = bow_hand + Vec3::new(-0.3, -1.0, 0.05).normalize() * 0.72;
+    for tip in [tip_up, tip_dn] {
+        let d = draw_hand - tip;
+        m.frustum_rot(p, tip, Quat::from_rotation_arc(Vec3::Y, d.normalize()), 0.006, 0.006, d.length(), 3, rgb(0.85, 0.82, 0.7), true, false);
+    }
+    m.frustum_rot(p, draw_hand, Quat::from_rotation_arc(Vec3::Y, (bow_hand - draw_hand).normalize()), 0.012, 0.012, 0.9, 4, rgb(0.6, 0.5, 0.35), true, false);
+    m.frustum_rot(p, Vec3::new(-0.22, 0.75, 0.1), Quat::from_rotation_x(0.25), 0.08, 0.09, 0.6, 7, leather(), true, true);
+}
+
 pub fn module(kind: ModuleKind) -> Model {
     let mut m = Model::new();
     match kind {
         ModuleKind::ArrowLoft => {
-            m.boxy(Mat::Wood, Vec3::new(1.8, 0.2, 1.8), Vec3::new(0.0, 0.1, 0.0), W);
-            for (x, z) in [(-0.8, -0.8), (0.8, -0.8), (-0.8, 0.8), (0.8, 0.8)] {
-                m.boxy(Mat::Wood, Vec3::new(0.14, 1.0, 0.14), Vec3::new(x, 0.7, z), timber());
+            // Covered wooden hoarding with archers drawing longbows.
+            m.boxy(Mat::Wood, Vec3::new(2.2, 0.2, 2.2), Vec3::new(0.0, 0.1, 0.0), W);
+            for (x, z) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+                m.boxy(Mat::Wood, Vec3::new(0.16, 1.9, 0.16), Vec3::new(x, 1.05, z), sh(timber(), 1.0));
             }
-            m.roof(Vec3::new(0.0, 1.2, 0.0), Quat::IDENTITY, 1.9, 1.9, 0.9, 0.12, slate_tint(), Mat::Wood, W, Mat::Slate);
-            for z in [-0.4, 0.4] {
-                m.frustum(Mat::Paint, Vec3::new(0.35, 0.2, z), 0.2, 0.17, 0.55, 8, royal(), true);
-                m.blob(Mat::Paint, Vec3::new(0.35, 0.9, z), 0.13, Vec3::ONE, skin(), 0.0, 1, 1);
-                m.blob(Mat::Paint, Vec3::new(0.35, 0.96, z), 0.14, Vec3::new(1.0, 0.7, 1.0), steel(), 0.0, 1, 1);
+            for (side, axis) in [(1.0f32, true), (-1.0, false), (1.0, false)] {
+                for k in 0..7 {
+                    let t = -0.9 + k as f32 * 0.3;
+                    let h = if k % 2 == 0 { 0.75 } else { 0.5 };
+                    let (pos, size) = if axis {
+                        (Vec3::new(1.05 * side, 0.2 + h / 2.0, t), Vec3::new(0.06, h, 0.26))
+                    } else {
+                        (Vec3::new(t, 0.2 + h / 2.0, 1.05 * side), Vec3::new(0.26, h, 0.06))
+                    };
+                    m.boxy(Mat::Wood, size, pos, W);
+                }
+            }
+            m.roof(Vec3::new(0.0, 1.95, 0.0), Quat::IDENTITY, 2.4, 2.4, 1.0, 0.15, slate_tint(), Mat::Wood, W, Mat::Slate);
+            for (x, z, a) in [(0.35, -0.55, 0.15), (0.45, 0.5, -0.2), (-0.45, 0.0, 0.0)] {
+                let mut fig = Model::new();
+                archer_figure(&mut fig, rgb(0.14, 0.24, 0.44), rgb(0.16, 0.18, 0.26));
+                m.append(fig, Transform::from_xyz(x, 0.2, z).with_rotation(Quat::from_rotation_y(a)).with_scale(Vec3::splat(0.9)));
             }
         }
         ModuleKind::Mortar => {
-            m.frustum(Mat::Wood, Vec3::ZERO, 0.85, 0.8, 0.35, 12, W, true);
-            m.frustum(Mat::Iron, Vec3::Y * 0.35, 0.72, 0.55, 1.0, 16, W, true);
-            for y in [0.5, 0.9, 1.25] {
-                m.frustum(Mat::Iron, Vec3::Y * y, 0.68 - y * 0.12, 0.68 - y * 0.12, 0.08, 16, rgb(0.6, 0.6, 0.6), true);
+            // Squat bronze bombard on a heavy timber bed, with spare shot.
+            m.boxy(Mat::Wood, Vec3::new(1.7, 0.35, 1.3), Vec3::new(0.0, 0.18, 0.0), W);
+            for x in [-0.6, 0.0, 0.6] {
+                m.boxy(Mat::Iron, Vec3::new(0.1, 0.37, 1.32), Vec3::new(x, 0.18, 0.0), W);
             }
-            m.frustum(Mat::Paint, Vec3::Y * 1.36, 0.42, 0.42, 0.02, 16, rgb(0.03, 0.03, 0.03), true);
+            // Timber cradle holding a short, thick bronze barrel tilted skyward.
+            for z in [-0.42f32, 0.42] {
+                m.boxy(Mat::Wood, Vec3::new(0.9, 0.55, 0.14), Vec3::new(-0.1, 0.62, z), W);
+            }
+            let rot = Quat::from_rotation_z(-0.5);
+            let base = Vec3::new(-0.25, 0.55, 0.0);
+            m.blob(Mat::Bronze, base, 0.36, Vec3::new(1.0, 0.9, 1.0), W, 0.0, 1, 2);
+            m.frustum_rot(Mat::Bronze, base, rot, 0.36, 0.31, 0.95, 20, W, true, false);
+            for (t, r) in [(0.1, 0.39), (0.5, 0.36), (0.88, 0.37)] {
+                m.frustum_rot(Mat::Bronze, base + rot * Vec3::Y * t, rot, r, r, 0.08, 20, sh(W, 0.85), true, false);
+            }
+            m.frustum_rot(Mat::Bronze, base + rot * Vec3::Y * 0.95, rot, 0.36, 0.36, 0.05, 20, W, true, false);
+            m.frustum_rot(Mat::Paint, base + rot * Vec3::Y * 0.97, rot, 0.25, 0.25, 0.01, 16, rgb(0.02, 0.02, 0.02), true, true);
+            m.frustum_rot(Mat::Bronze, base + Vec3::new(0.0, 0.0, -0.5), Quat::from_rotation_x(FRAC_PI_2), 0.07, 0.07, 1.0, 8, W, true, true);
+            for (x, z) in [(0.55, 0.4), (0.7, 0.15), (0.6, -0.15)] {
+                m.blob(Mat::Iron, Vec3::new(x, 0.47, z), 0.13, Vec3::ONE, W, 0.0, 1, 2);
+            }
         }
         ModuleKind::Ram => {
-            m.boxy(Mat::Wood, Vec3::new(1.8, 0.55, 0.9), Vec3::new(0.3, 0.6, 0.0), W);
-            m.frustum_rot(Mat::Iron, Vec3::new(1.2, 0.6, 0.0), Quat::from_rotation_z(-FRAC_PI_2), 0.5, 0.0, 1.5, 8, W, false, false);
-            for x in [-0.2, 0.5] {
-                m.boxy(Mat::Iron, Vec3::new(0.12, 0.6, 0.95), Vec3::new(x, 0.6, 0.0), W);
+            // Covered battering ram: iron-headed log hung on chains.
+            for (x, z) in [(-0.6, -0.55), (-0.6, 0.55), (1.0, -0.55), (1.0, 0.55)] {
+                m.boxy(Mat::Wood, Vec3::new(0.15, 1.3, 0.15), Vec3::new(x, 0.65, z), W);
             }
-            for z in [-0.5, 0.5] {
-                m.frustum_rot(Mat::Iron, Vec3::new(1.0, 0.6, z), Quat::from_rotation_z(-FRAC_PI_2), 0.16, 0.0, 0.8, 6, W, false, false);
+            m.boxy(Mat::Wood, Vec3::new(1.8, 0.12, 0.15), Vec3::new(0.2, 1.3, 0.0), W);
+            m.roof(Vec3::new(0.2, 1.32, 0.0), Quat::IDENTITY, 1.9, 1.3, 0.55, 0.1, rgb(0.55, 0.42, 0.3), Mat::Wood, W, Mat::Wood);
+            let axis = Quat::from_rotation_z(-FRAC_PI_2);
+            m.frustum_rot(Mat::Bark, Vec3::new(-0.7, 0.62, 0.0), axis, 0.22, 0.2, 2.2, 10, W, true, true);
+            for x in [-0.4, 0.4, 1.1] {
+                m.frustum_rot(Mat::Iron, Vec3::new(x, 0.62, 0.0), axis, 0.24, 0.24, 0.08, 10, W, true, false);
+            }
+            m.frustum_rot(Mat::Iron, Vec3::new(1.5, 0.62, 0.0), axis, 0.3, 0.26, 0.35, 10, W, true, true);
+            m.frustum_rot(Mat::Iron, Vec3::new(1.85, 0.62, 0.0), axis, 0.24, 0.0, 0.35, 8, W, false, false);
+            for x in [-0.2, 0.8] {
+                m.boxy(Mat::Iron, Vec3::new(0.04, 0.65, 0.04), Vec3::new(x, 0.98, 0.0), W);
             }
         }
         ModuleKind::MineLayer => {
-            m.frustum_rot(Mat::Wood, Vec3::new(0.4, 0.7, 0.0), Quat::from_rotation_z(FRAC_PI_2), 0.55, 0.55, 1.1, 14, W, true, true);
-            for x in [0.25, -0.25, -0.6] {
-                m.frustum_rot(Mat::Iron, Vec3::new(x + 0.03, 0.7, 0.0), Quat::from_rotation_z(FRAC_PI_2), 0.58, 0.58, 0.06, 14, W, true, false);
+            m.frustum_rot(Mat::Wood, Vec3::new(0.5, 0.75, 0.0), Quat::from_rotation_z(FRAC_PI_2), 0.5, 0.56, 1.1, 16, W, true, true);
+            for x in [0.35, -0.05, -0.45] {
+                m.frustum_rot(Mat::Iron, Vec3::new(x + 0.03, 0.75, 0.0), Quat::from_rotation_z(FRAC_PI_2), 0.58, 0.58, 0.06, 16, W, true, false);
             }
-            m.cube(Mat::Iron, Vec3::new(1.0, 0.1, 0.6), Vec3::new(-0.9, 0.35, 0.0), Quat::from_rotation_z(0.3), W);
+            m.cube(Mat::Wood, Vec3::new(1.1, 0.08, 0.7), Vec3::new(-1.0, 0.4, 0.0), Quat::from_rotation_z(0.35), W);
+            for z in [-0.36f32, 0.36] {
+                m.cube(Mat::Wood, Vec3::new(1.1, 0.2, 0.05), Vec3::new(-1.0, 0.48, z), Quat::from_rotation_z(0.35), W);
+            }
+            for (x, z) in [(-0.9, 0.0), (-1.35, 0.15)] {
+                m.blob(Mat::Iron, Vec3::new(x, 0.6 - (x + 0.9).abs() * 0.3, z), 0.17, Vec3::ONE, W, 0.0, 1, 2);
+            }
         }
         ModuleKind::Broadside => {
-            // One gun facing +Z; it is mounted on both sides.
-            m.boxy(Mat::Wood, Vec3::new(0.9, 0.35, 0.9), Vec3::new(0.0, 0.18, -0.2), W);
-            m.frustum_rot(Mat::Iron, Vec3::new(0.0, 0.55, -0.6), Quat::from_rotation_x(FRAC_PI_2), 0.3, 0.24, 1.7, 12, W, true, false);
-            m.frustum_rot(Mat::Iron, Vec3::new(0.0, 0.55, 0.95), Quat::from_rotation_x(FRAC_PI_2), 0.3, 0.3, 0.15, 12, W, true, true);
-            for x in [-0.42, 0.42] {
-                wheel(&mut m, Vec3::new(x, 0.25, 0.1), 0.25, 0.1);
+            // Bronze cannon on a wooden carriage, facing +Z (mounted on both sides).
+            for x in [-0.27f32, 0.27] {
+                m.cube(Mat::Wood, Vec3::new(0.11, 0.5, 1.5), Vec3::new(x, 0.42, -0.25), Quat::from_rotation_x(0.12), W);
+            }
+            m.boxy(Mat::Wood, Vec3::new(0.6, 0.18, 0.3), Vec3::new(0.0, 0.3, -0.75), W);
+            m.frustum_rot(Mat::Iron, Vec3::new(-0.62, 0.36, 0.25), Quat::from_rotation_z(-FRAC_PI_2), 0.05, 0.05, 1.24, 6, W, true, false);
+            for x in [-0.5f32, 0.5] {
+                let mut wheel = Model::new();
+                spoked_wheel(&mut wheel, Vec3::ZERO, 0.36, 0.09);
+                m.append(wheel, Transform::from_xyz(x, 0.36, 0.25).with_rotation(Quat::from_rotation_y(FRAC_PI_2)));
+            }
+            let axis = Quat::from_rotation_x(FRAC_PI_2);
+            let breech = Vec3::new(0.0, 0.72, -0.6);
+            m.frustum_rot(Mat::Bronze, breech, axis, 0.25, 0.17, 1.9, 20, W, true, false);
+            for (t, r) in [(0.0, 0.27), (0.45, 0.24), (1.0, 0.22), (1.78, 0.2)] {
+                m.frustum_rot(Mat::Bronze, breech + Vec3::Z * t, axis, r, r, 0.09, 20, sh(W, 0.9), true, false);
+            }
+            m.frustum_rot(Mat::Bronze, breech + Vec3::Z * 1.9, axis, 0.2, 0.2, 0.06, 20, W, true, true);
+            m.frustum_rot(Mat::Paint, breech + Vec3::Z * 1.965, axis, 0.1, 0.1, 0.005, 12, rgb(0.02, 0.02, 0.02), true, true);
+            m.blob(Mat::Bronze, breech - Vec3::Z * 0.12, 0.09, Vec3::ONE, W, 0.0, 1, 2);
+            m.frustum_rot(Mat::Bronze, breech + Vec3::new(-0.33, 0.0, 0.55), Quat::from_rotation_z(-FRAC_PI_2), 0.06, 0.06, 0.66, 8, W, true, true);
+        }
+        ModuleKind::Ballista => {
+            // Giant torsion crossbow on a turntable, facing +X.
+            m.frustum(Mat::Wood, Vec3::ZERO, 0.65, 0.6, 0.22, 16, W, true);
+            m.frustum(Mat::Iron, Vec3::Y * 0.22, 0.62, 0.62, 0.04, 16, W, true);
+            m.frustum(Mat::Wood, Vec3::Y * 0.26, 0.16, 0.13, 0.45, 8, W, true);
+            let tilt = Quat::from_rotation_z(0.08);
+            m.cube(Mat::Wood, Vec3::new(2.5, 0.16, 0.3), Vec3::new(0.0, 0.8, 0.0), tilt, W);
+            m.cube(Mat::Wood, Vec3::new(0.35, 0.65, 0.6), Vec3::new(0.75, 0.86, 0.0), tilt, W);
+            for z in [-0.22f32, 0.22] {
+                m.frustum(Mat::Paint, Vec3::new(0.75, 0.55, z), 0.09, 0.09, 0.65, 8, rgb(0.45, 0.35, 0.22), true);
+                for y in [0.58, 1.17] {
+                    m.frustum(Mat::Iron, Vec3::new(0.75, y, z), 0.11, 0.11, 0.05, 8, W, true);
+                }
+            }
+            let mut tips = Vec::new();
+            for s in [-1.0f32, 1.0] {
+                let root = Vec3::new(0.8, 0.88, s * 0.24);
+                let dir = Vec3::new(-0.38, 0.03, s).normalize();
+                m.frustum_rot(Mat::Wood, root, Quat::from_rotation_arc(Vec3::Y, dir), 0.07, 0.04, 1.05, 7, W, true, false);
+                let tip = root + dir * 1.05;
+                m.blob(Mat::Iron, tip, 0.05, Vec3::ONE, W, 0.0, 1, 1);
+                tips.push(tip);
+            }
+            let nock = Vec3::new(-0.45, 0.93, 0.0);
+            for tip in tips {
+                let d = nock - tip;
+                m.frustum_rot(Mat::Paint, tip, Quat::from_rotation_arc(Vec3::Y, d.normalize()), 0.012, 0.012, d.length(), 3, rgb(0.82, 0.78, 0.66), true, false);
+            }
+            let bolt = Quat::from_rotation_z(-FRAC_PI_2 + 0.08);
+            m.frustum_rot(Mat::Wood, Vec3::new(-0.45, 0.95, 0.0), bolt, 0.035, 0.035, 1.9, 6, rgb(0.8, 0.7, 0.55), true, false);
+            m.frustum_rot(Mat::Iron, Vec3::new(1.44, 1.1, 0.0), bolt, 0.07, 0.0, 0.25, 4, W, false, false);
+            for s in [-1.0f32, 1.0] {
+                m.card(Mat::Cloth, Vec3::new(-0.3, 0.97, 0.0), Vec3::X * 0.14, Vec3::new(0.0, 0.05, s * 0.08), Vec2::ZERO, Vec2::ONE, rgb(0.85, 0.83, 0.78), None);
+            }
+            m.frustum_rot(Mat::Wood, Vec3::new(-1.1, 0.78, -0.32), Quat::from_rotation_x(FRAC_PI_2), 0.09, 0.09, 0.64, 10, W, true, true);
+            for z in [-0.36f32, 0.36] {
+                m.cube(Mat::Iron, Vec3::new(0.04, 0.3, 0.04), Vec3::new(-1.1, 0.88, z), Quat::from_rotation_x(0.6), W);
+            }
+        }
+    }
+    m
+}
+
+/// Small 3D still-life for each artifact card.
+pub fn artifact(kind: crate::items::ArtifactKind) -> Model {
+    use crate::items::ArtifactKind as A;
+    let mut m = Model::new();
+    match kind {
+        A::Whetstone => {
+            m.blob(Mat::Stone, Vec3::new(0.0, 0.12, 0.0), 0.3, Vec3::new(2.2, 0.5, 0.9), rgb(0.6, 0.6, 0.62), 0.05, 3, 2);
+            m.cube(Mat::Iron, Vec3::new(1.6, 0.03, 0.18), Vec3::new(0.1, 0.45, 0.1), Quat::from_rotation_z(0.35), rgb(1.3, 1.3, 1.35));
+            m.cube(Mat::Wood, Vec3::new(0.45, 0.08, 0.08), Vec3::new(-0.75, 0.15, 0.1), Quat::from_rotation_z(0.35), W);
+            m.cube(Mat::Bronze, Vec3::new(0.06, 0.1, 0.4), Vec3::new(-0.52, 0.24, 0.1), Quat::from_rotation_z(0.35), W);
+        }
+        A::GreasedAxles => {
+            let mut w = Model::new();
+            spoked_wheel(&mut w, Vec3::ZERO, 0.55, 0.1);
+            m.append(w, Transform::from_xyz(0.0, 0.6, 0.0));
+            m.frustum_rot(Mat::Iron, Vec3::new(0.0, 0.6, -0.6), Quat::from_rotation_x(FRAC_PI_2), 0.06, 0.06, 1.2, 8, W, true, true);
+            m.frustum(Mat::Bronze, Vec3::new(0.7, 0.0, 0.3), 0.18, 0.14, 0.35, 12, W, true);
+            m.frustum_rot(Mat::Bronze, Vec3::new(0.7, 0.3, 0.3), Quat::from_rotation_z(0.9), 0.04, 0.02, 0.4, 6, W, true, false);
+        }
+        A::Lodestone => {
+            for z in [-0.3f32, 0.3] {
+                m.boxy(Mat::Iron, Vec3::new(0.9, 0.22, 0.22), Vec3::new(0.0, 0.3, z), W);
+                m.boxy(Mat::Paint, Vec3::new(0.25, 0.23, 0.23), Vec3::new(0.55, 0.3, z), if z < 0.0 { rgb(0.75, 0.1, 0.08) } else { rgb(0.12, 0.2, 0.6) });
+            }
+            m.frustum_rot(Mat::Iron, Vec3::new(-0.45, 0.3, -0.3), Quat::from_rotation_x(FRAC_PI_2), 0.11, 0.11, 0.6, 12, W, true, false);
+            for k in 0..5 {
+                m.blob(Mat::Gold, Vec3::new(0.85 + k as f32 * 0.06, 0.1, -0.3 + k as f32 * 0.15), 0.07, Vec3::new(1.0, 0.25, 1.0), W, 0.0, 1, 1);
+            }
+        }
+        A::ReinforcedHull => {
+            m.boxy(Mat::Wood, Vec3::new(1.3, 1.0, 0.12), Vec3::new(0.0, 0.5, 0.0), W);
+            m.boxy(Mat::Iron, Vec3::new(1.1, 0.8, 0.08), Vec3::new(0.0, 0.5, 0.09), W);
+            for (x, y) in [(-0.45, 0.2), (0.45, 0.2), (-0.45, 0.8), (0.45, 0.8), (0.0, 0.2), (0.0, 0.8)] {
+                m.blob(Mat::Iron, Vec3::new(x, y, 0.14), 0.05, Vec3::ONE, sh(W, 1.4), 0.0, 1, 1);
+            }
+        }
+        A::QuickHands => {
+            for y in [0.0, 1.0] {
+                m.frustum(Mat::Wood, Vec3::new(0.0, y, 0.0), 0.42, 0.42, 0.1, 16, W, true);
+            }
+            for (x, z) in [(0.32, 0.32), (-0.32, 0.32), (0.32, -0.32), (-0.32, -0.32)] {
+                m.frustum(Mat::Wood, Vec3::new(x, 0.1, z), 0.035, 0.035, 0.9, 6, W, true);
+            }
+            m.frustum(Mat::Glass, Vec3::new(0.0, 0.1, 0.0), 0.3, 0.04, 0.45, 16, W, true);
+            m.frustum(Mat::Glass, Vec3::new(0.0, 0.55, 0.0), 0.04, 0.3, 0.45, 16, W, true);
+            m.frustum(Mat::Paint, Vec3::new(0.0, 0.1, 0.0), 0.24, 0.0, 0.25, 12, rgb(0.85, 0.7, 0.4), true);
+        }
+        A::BlackPowder => {
+            m.frustum(Mat::Wood, Vec3::ZERO, 0.42, 0.48, 0.45, 16, W, true);
+            m.frustum(Mat::Wood, Vec3::Y * 0.45, 0.48, 0.42, 0.45, 16, W, true);
+            for y in [0.1, 0.45, 0.8] {
+                m.frustum(Mat::Iron, Vec3::Y * y, 0.47, 0.47, 0.05, 16, W, true);
+            }
+            m.blob(Mat::Iron, Vec3::new(0.65, 0.22, 0.25), 0.22, Vec3::ONE, sh(W, 0.6), 0.0, 1, 2);
+            m.frustum_rot(Mat::Paint, Vec3::new(0.65, 0.42, 0.25), Quat::from_rotation_z(0.5), 0.02, 0.02, 0.25, 4, rgb(0.6, 0.5, 0.3), true, false);
+            m.blob(Mat::Paint, Vec3::new(0.54, 0.65, 0.25), 0.05, Vec3::ONE, rgb(4.0, 2.0, 0.4), 0.0, 1, 1);
+        }
+        A::HawkEye => {
+            let rot = Quat::from_rotation_z(-1.25);
+            let mut base = Vec3::new(-0.7, 0.15, 0.0);
+            for (len, r) in [(0.6, 0.13), (0.5, 0.11), (0.45, 0.09)] {
+                m.frustum_rot(Mat::Bronze, base, rot, r, r, len, 16, W, true, true);
+                m.frustum_rot(Mat::Bronze, base + rot * Vec3::Y * (len - 0.05), rot, r + 0.02, r + 0.02, 0.06, 16, sh(W, 0.8), true, false);
+                base += rot * Vec3::Y * len;
+            }
+            m.frustum_rot(Mat::Glass, base, rot, 0.08, 0.08, 0.01, 12, W, true, true);
+        }
+        A::TinkersKit => {
+            m.frustum_rot(Mat::Wood, Vec3::new(-0.6, 0.08, 0.1), Quat::from_rotation_z(-FRAC_PI_2), 0.045, 0.04, 1.0, 6, W, true, true);
+            m.boxy(Mat::Iron, Vec3::new(0.16, 0.16, 0.45), Vec3::new(0.42, 0.1, 0.1), W);
+            for (x, z, r) in [(-0.3, -0.45, 0.3), (0.25, -0.5, 0.2)] {
+                m.frustum(Mat::Bronze, Vec3::new(x, 0.0, z), r, r, 0.08, 18, W, true);
+                for k in 0..10 {
+                    let a = k as f32 / 10.0 * TAU;
+                    m.boxy(Mat::Bronze, Vec3::new(0.07, 0.08, 0.07), Vec3::new(x + a.cos() * (r + 0.03), 0.04, z + a.sin() * (r + 0.03)), W);
+                }
+            }
+        }
+        A::Poultice => {
+            m.blob(Mat::Paint, Vec3::new(0.0, 0.35, 0.0), 0.33, Vec3::new(1.0, 1.05, 1.0), rgb(0.15, 0.55, 0.25), 0.0, 1, 3);
+            m.blob(Mat::Glass, Vec3::new(0.0, 0.36, 0.0), 0.35, Vec3::new(1.0, 1.05, 1.0), W, 0.0, 1, 3);
+            m.frustum(Mat::Glass, Vec3::new(0.0, 0.66, 0.0), 0.1, 0.08, 0.3, 12, W, true);
+            m.frustum(Mat::Wood, Vec3::new(0.0, 0.92, 0.0), 0.085, 0.1, 0.14, 10, rgb(0.8, 0.65, 0.45), true);
+            m.boxy(Mat::Paint, Vec3::new(0.3, 0.16, 0.02), Vec3::new(0.0, 0.32, 0.33), rgb(0.88, 0.82, 0.66));
+        }
+        A::GoldenFleece => {
+            for (x, y, z, r) in [(0.0, 0.25, 0.0, 0.32), (0.3, 0.2, 0.2, 0.24), (-0.3, 0.22, -0.15, 0.25), (0.15, 0.4, -0.2, 0.2), (-0.2, 0.35, 0.25, 0.2)] {
+                m.blob(Mat::Gold, Vec3::new(x, y, z), r, Vec3::new(1.0, 0.7, 1.0), W, 0.3, (x * 100.0) as u32 + 7, 2);
+            }
+        }
+        A::NitroTank => {
+            m.frustum(Mat::Iron, Vec3::ZERO, 0.32, 0.32, 0.9, 18, W, true);
+            m.blob(Mat::Iron, Vec3::Y * 0.9, 0.32, Vec3::new(1.0, 0.6, 1.0), W, 0.0, 1, 2);
+            m.frustum(Mat::Paint, Vec3::Y * 0.4, 0.325, 0.325, 0.16, 18, rgb(0.15, 0.35, 0.85), true);
+            m.frustum(Mat::Bronze, Vec3::Y * 1.05, 0.06, 0.06, 0.18, 8, W, true);
+            m.frustum_rot(Mat::Bronze, Vec3::Y * 1.18, Quat::from_rotation_x(FRAC_PI_2), 0.12, 0.12, 0.03, 12, W, true, true);
+        }
+        A::IronSpikes => {
+            m.boxy(Mat::Iron, Vec3::new(1.2, 0.12, 0.8), Vec3::new(0.0, 0.06, 0.0), W);
+            for x in [-0.4, 0.0, 0.4] {
+                for z in [-0.2, 0.2] {
+                    m.frustum(Mat::Iron, Vec3::new(x, 0.12, z), 0.1, 0.0, 0.5, 6, sh(W, 1.3), false);
+                }
             }
         }
     }
@@ -765,12 +1093,7 @@ pub fn footman() -> Mesh {
 
 pub fn archer() -> Mesh {
     let mut m = Model::new();
-    soldier(&mut m, rgb(0.22, 0.28, 0.16), rgb(0.30, 0.24, 0.16));
-    // Longbow and quiver.
-    for s in [-1.0f32, 1.0] {
-        m.frustum_rot(Mat::Paint, Vec3::new(0.32, 1.0, 0.0), Quat::from_rotation_x(s * 0.25 + if s > 0.0 { 0.0 } else { std::f32::consts::PI }), 0.025, 0.015, 0.75, 5, timber(), true, false);
-    }
-    m.frustum_rot(Mat::Paint, Vec3::new(-0.25, 0.7, 0.1), Quat::from_rotation_x(0.2), 0.08, 0.09, 0.6, 7, leather(), true, true);
+    archer_figure(&mut m, rgb(0.24, 0.30, 0.16), rgb(0.26, 0.20, 0.13));
     m.build_single()
 }
 
@@ -985,42 +1308,104 @@ pub fn warlord() -> Model {
 // Countryside
 // ---------------------------------------------------------------------------
 
-/// Leafy tree: a few lumpy, smooth-shaded crowns on a trunk.
-pub fn add_tree(m: &mut Model, pos: Vec3, size: f32, hue: f32, seed: u32) {
-    let leaf = rgb(0.20, 0.30, 0.13).mix(&rgb(0.30, 0.36, 0.14), hue);
-    m.frustum(Mat::Wood, pos, 0.28 * size, 0.18 * size, 2.0 * size, 7, rgb(0.55, 0.45, 0.4), true);
-    let crowns = [
-        (Vec3::new(0.0, 2.6, 0.0), 1.45),
-        (Vec3::new(0.85, 2.2, 0.5), 1.05),
-        (Vec3::new(-0.75, 2.3, -0.55), 1.0),
-        (Vec3::new(0.1, 3.3, -0.3), 0.95),
-    ];
-    for (i, (off, r)) in crowns.iter().enumerate() {
-        let tint = 0.85 + 0.3 * ((seed as usize + i) % 5) as f32 / 4.0;
-        m.blob(Mat::Leaf, pos + *off * size, r * size, Vec3::new(1.0, 0.85, 1.0), sh(leaf, tint), 0.18, seed + i as u32 * 13, 2);
+/// A cluster of leaf cards around `c`, filled with a dark core so the crown
+/// never looks see-through from above.
+fn leaf_cluster(m: &mut Model, rnd: &mut Rand, c: Vec3, r: f32, cards: u32, tint: Color, card_size: f32) {
+    m.blob(Mat::Leaf, c, r * 0.72, Vec3::new(1.0, 0.8, 1.0), sh(rgb(0.07, 0.12, 0.05), 1.0), 0.15, rnd.0, 1);
+    for _ in 0..cards {
+        let p = c + rnd.dir() * r * rnd.f().sqrt() * Vec3::new(1.0, 0.8, 1.0);
+        let n = (rnd.dir() + Vec3::Y * 0.7).normalize();
+        let seed = if n.x.abs() < 0.9 { Vec3::X } else { Vec3::Z };
+        let t = n.cross(seed).normalize();
+        let b = n.cross(t);
+        let a = rnd.range(0.0, TAU);
+        let (right, up) = (t * a.cos() + b * a.sin(), -t * a.sin() + b * a.cos());
+        let s = card_size * rnd.range(0.8, 1.2);
+        let cell = if rnd.f() < 0.6 { LEAF_A } else { LEAF_B };
+        let k = rnd.range(0.82, 1.15);
+        m.card(Mat::Foliage, p, right * s, up * s, cell.0, cell.1, sh(tint, k), Some(c - Vec3::Y * r * 0.3));
     }
 }
 
-pub fn add_pine(m: &mut Model, pos: Vec3, size: f32, seed: u32) {
-    m.frustum(Mat::Wood, pos, 0.25 * size, 0.15 * size, 1.4 * size, 6, rgb(0.5, 0.4, 0.35), true);
-    let green = rgb(0.10, 0.20, 0.12);
-    for i in 0..4 {
-        let y = 0.9 + i as f32 * 0.85;
-        let r = 1.45 - i as f32 * 0.3;
-        let shade = 0.8 + 0.1 * i as f32;
-        m.frustum(Mat::Leaf, pos + Vec3::Y * y * size, r * size, 0.0, 1.5 * size, 9, sh(green, shade), true);
+/// Leafy broadleaf tree: bark trunk, branches and a crown of leaf cards.
+pub fn add_tree(m: &mut Model, pos: Vec3, size: f32, hue: f32, seed: u32) {
+    let mut rnd = Rand(seed | 1);
+    let tint = rgb(0.95, 1.0, 0.9).mix(&rgb(1.1, 1.05, 0.8), hue);
+    m.frustum(Mat::Bark, pos, 0.32 * size, 0.2 * size, 2.4 * size, 9, W, true);
+    let crowns = [
+        (Vec3::new(0.0, 3.0, 0.0), 1.6),
+        (Vec3::new(1.0, 2.5, 0.6), 1.15),
+        (Vec3::new(-0.9, 2.6, -0.6), 1.1),
+        (Vec3::new(0.2, 3.8, -0.4), 1.05),
+        (Vec3::new(-0.3, 2.4, 0.9), 0.95),
+    ];
+    for (off, r) in crowns {
+        let c = pos + off * size;
+        // Branch from the trunk into each crown.
+        let from = pos + Vec3::Y * 1.9 * size;
+        let d = c - from;
+        if d.length() > 0.3 {
+            m.frustum_rot(Mat::Bark, from, Quat::from_rotation_arc(Vec3::Y, d.normalize()), 0.13 * size, 0.06 * size, d.length() * 0.8, 6, W, true, false);
+        }
+        leaf_cluster(m, &mut rnd, c, r * size, (14.0 * r) as u32 + 6, tint, 0.85 * size);
     }
-    let _ = seed;
+}
+
+/// Fir: drooping layers of needle branches around a bark trunk.
+pub fn add_pine(m: &mut Model, pos: Vec3, size: f32, seed: u32) {
+    let mut rnd = Rand(seed | 1);
+    m.frustum(Mat::Bark, pos, 0.28 * size, 0.08 * size, 5.6 * size, 7, W, true);
+    m.frustum(Mat::Leaf, pos + Vec3::Y * 1.0 * size, 1.3 * size, 0.0, 4.6 * size, 10, rgb(0.04, 0.09, 0.05), true);
+    let tiers = 6;
+    for t in 0..tiers {
+        let y = (1.1 + t as f32 * 0.75) * size;
+        let len = (1.9 - t as f32 * 0.25) * size;
+        let n = 9 - t / 2;
+        for k in 0..n {
+            let a = k as f32 / n as f32 * TAU + rnd.range(-0.25, 0.25) + t as f32 * 0.4;
+            let out = Vec3::new(a.cos(), 0.0, a.sin());
+            let tangent = Vec3::new(-a.sin(), 0.0, a.cos());
+            let droop = rnd.range(0.25, 0.5);
+            let along = (out * droop.cos() - Vec3::Y * droop.sin()) * (len / 2.0);
+            let base = pos + Vec3::Y * y;
+            let shade = rgb(0.85, 0.95, 0.9);
+            // Card "bottom" (the twig base) sits at the trunk.
+            m.card(Mat::Foliage, base + along, tangent * (len * 0.33), along, FIR.0, FIR.1, sh(shade, rnd.range(0.8, 1.1)), Some(pos + Vec3::Y * (y - 1.0)));
+        }
+    }
+    let tip = pos + Vec3::Y * 5.6 * size;
+    m.card(Mat::Foliage, tip, Vec3::X * 0.35 * size, Vec3::Y * 0.6 * size, FIR.0, FIR.1, W, None);
+    m.card(Mat::Foliage, tip, Vec3::Z * 0.35 * size, Vec3::Y * 0.6 * size, FIR.0, FIR.1, W, None);
+}
+
+/// Round shrub.
+pub fn add_bush(m: &mut Model, pos: Vec3, size: f32, seed: u32) {
+    let mut rnd = Rand(seed | 1);
+    let tint = rgb(0.9, 1.0, 0.85);
+    leaf_cluster(m, &mut rnd, pos + Vec3::Y * 0.55 * size, 0.85 * size, 14, tint, 0.55 * size);
+    if rnd.f() < 0.6 {
+        let off = Vec3::new(rnd.range(-0.7, 0.7), 0.4, rnd.range(-0.7, 0.7)) * size;
+        leaf_cluster(m, &mut rnd, pos + off, 0.6 * size, 9, tint, 0.45 * size);
+    }
 }
 
 pub fn add_rock(m: &mut Model, pos: Vec3, size: f32, seed: u32) {
     m.blob(Mat::Stone, pos, size, Vec3::new(1.3, 0.6, 1.0), rgb(0.78, 0.76, 0.72), 0.25, seed, 2);
 }
 
-pub fn add_tuft(m: &mut Model, pos: Vec3, size: f32) {
-    let c = rgb(0.24, 0.32, 0.12);
-    for (dx, dz, h) in [(0.0, 0.0, 0.55), (0.12, 0.08, 0.4), (-0.1, 0.1, 0.45)] {
-        m.frustum(Mat::Leaf, pos + Vec3::new(dx, 0.0, dz) * size, 0.07 * size, 0.0, h * size, 3, c, false);
+/// A clump of grass blades (with the odd wildflower) as three crossed cards.
+pub fn add_grass(m: &mut Model, pos: Vec3, size: f32, seed: u32) {
+    let mut rnd = Rand(seed | 1);
+    let h = rnd.range(0.35, 0.55) * size;
+    let w = rnd.range(0.45, 0.7) * size;
+    let base_a = rnd.range(0.0, TAU);
+    // Blades fan outward around the clump so they read as a tuft from above.
+    for k in 0..5 {
+        let a = base_a + k as f32 * TAU / 5.0 + rnd.range(-0.3, 0.3);
+        let out = Vec3::new(a.cos(), 0.0, a.sin());
+        let right = Vec3::new(-a.sin(), 0.0, a.cos()) * w * 0.6;
+        let lean = (out * rnd.range(0.7, 1.1) + Vec3::Y).normalize() * h;
+        m.card(Mat::Foliage, pos + lean, right, lean, GRASS.0, GRASS.1, sh(rgb(0.95, 1.0, 0.9), rnd.range(0.85, 1.1)), Some(pos - Vec3::Y * 3.0));
     }
 }
 

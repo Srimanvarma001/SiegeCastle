@@ -172,16 +172,29 @@ struct Card;
 #[derive(Resource, Default)]
 struct ClickedCard(Option<usize>);
 
-const PANEL: Color = Color::srgb(0.13, 0.11, 0.13);
-const PARCHMENT: Color = Color::srgb(0.93, 0.88, 0.78);
-const INK: Color = Color::srgb(0.16, 0.12, 0.10);
+const PARCHMENT: Color = Color::srgb(0.93, 0.87, 0.74);
+const INK: Color = Color::srgb(0.20, 0.12, 0.08);
+const GOLD: Color = Color::srgb(0.82, 0.65, 0.33);
+const GOLD_DIM: Color = Color::srgb(0.50, 0.38, 0.19);
+const CREAM: Color = Color::srgb(0.93, 0.88, 0.78);
 
-fn frame_color(offer: Offer) -> Color {
+/// Velvet backing per card type: crimson for weapons, sapphire for
+/// artifacts, emerald for castle growth.
+fn velvet(offer: Offer) -> Color {
     match offer {
-        Offer::NewModule(_) | Offer::UpgradeModule(..) => Color::srgb(0.55, 0.36, 0.22),
-        Offer::Artifact(..) => Color::srgb(0.62, 0.64, 0.70),
-        Offer::Grow(_) => Color::srgb(0.62, 0.52, 0.36),
+        Offer::NewModule(_) | Offer::UpgradeModule(..) => Color::srgb(0.17, 0.05, 0.06),
+        Offer::Artifact(..) => Color::srgb(0.05, 0.08, 0.17),
+        Offer::Grow(_) => Color::srgb(0.04, 0.13, 0.09),
     }
+}
+
+fn lighter(c: Color) -> Color {
+    let l = c.to_srgba();
+    Color::srgb(l.red * 1.5 + 0.03, l.green * 1.5 + 0.03, l.blue * 1.5 + 0.03)
+}
+
+fn rule(width: f32) -> impl Bundle {
+    (Node { width: Val::Px(width), height: Val::Px(2.0), ..default() }, BackgroundColor(GOLD))
 }
 
 use crate::assets::{body as text, title};
@@ -234,6 +247,7 @@ fn spawn_choice_ui(mut commands: Commands, choice: Res<Choice>, loadout: Res<Loa
 }
 
 fn build_choice_ui(commands: &mut Commands, choice: &Choice, loadout: &Loadout, icons: &Icons, rerolls: u32) {
+    let corner = |px: f32| BorderRadius::all(CornerRadius::circular(Val::Px(px)));
     let root = commands
         .spawn((
             ChoiceScreen,
@@ -244,106 +258,145 @@ fn build_choice_ui(commands: &mut Commands, choice: &Choice, loadout: &Loadout, 
                 flex_direction: FlexDirection::Column,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
-                row_gap: Val::Px(18.0),
+                row_gap: Val::Px(20.0),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.05, 0.04, 0.03, 0.72)),
+            BackgroundColor(Color::srgba(0.03, 0.02, 0.03, 0.78)),
             GlobalZIndex(10),
         ))
         .id();
-    let heading = commands.spawn(title(choice.title.clone(), 48.0, Color::srgb(0.98, 0.92, 0.80))).id();
-    let row = commands
-        .spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(26.0), ..default() })
+    let heading = commands
+        .spawn((
+            Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(18.0), ..default() },
+            children![rule(90.0), title(choice.title.clone(), 46.0, Color::srgb(0.97, 0.88, 0.66)), rule(90.0)],
+        ))
         .id();
+    let row = commands.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(28.0), ..default() }).id();
     commands.entity(root).add_children(&[heading, row]);
 
     for (i, &offer) in choice.offers.iter().enumerate() {
         let (name, icon, tag, lines) = card_content(offer, loadout);
-        let frame = frame_color(offer);
+        let base = velvet(offer);
+        let hover = lighter(base);
         let card = commands
             .spawn((
                 Card,
                 Node {
-                    width: Val::Px(290.0),
-                    height: Val::Px(430.0),
-                    flex_direction: FlexDirection::Column,
-                    align_items: AlignItems::Center,
-                    border: UiRect::all(Val::Px(6.0)),
-                    border_radius: BorderRadius::all(CornerRadius::circular(Val::Px(22.0))),
-                    padding: UiRect::all(Val::Px(14.0)),
-                    row_gap: Val::Px(12.0),
+                    width: Val::Px(300.0),
+                    height: Val::Px(470.0),
+                    padding: UiRect::all(Val::Px(5.0)),
+                    border: UiRect::all(Val::Px(3.0)),
+                    border_radius: corner(16.0),
                     ..default()
                 },
-                BackgroundColor(PANEL),
-                BorderColor::all(frame),
+                BackgroundColor(base),
+                BorderColor::all(GOLD),
+                BoxShadow::new(Color::srgba(0.0, 0.0, 0.0, 0.7), Val::Px(0.0), Val::Px(10.0), Val::Px(4.0), Val::Px(18.0)),
             ))
             .id();
         commands
             .entity(card)
             .observe(move |_: On<PointerClick>, mut clicked: ResMut<ClickedCard>| clicked.0 = Some(i))
-            .observe(move |_: On<PointerOver>, mut q: Query<&mut BackgroundColor>| {
-                if let Ok(mut bg) = q.get_mut(card) {
-                    bg.0 = Color::srgb(0.24, 0.19, 0.22);
+            .observe(move |_: On<PointerOver>, mut q: Query<(&mut BackgroundColor, &mut BorderColor)>| {
+                if let Ok((mut bg, mut border)) = q.get_mut(card) {
+                    bg.0 = hover;
+                    *border = BorderColor::all(Color::srgb(1.0, 0.85, 0.5));
                 }
             })
-            .observe(move |_: On<PointerOut>, mut q: Query<&mut BackgroundColor>| {
-                if let Ok(mut bg) = q.get_mut(card) {
-                    bg.0 = PANEL;
+            .observe(move |_: On<PointerOut>, mut q: Query<(&mut BackgroundColor, &mut BorderColor)>| {
+                if let Ok((mut bg, mut border)) = q.get_mut(card) {
+                    bg.0 = base;
+                    *border = BorderColor::all(GOLD);
                 }
             });
-        let banner = commands
+        let inner = commands
             .spawn((
                 Node {
-                    padding: UiRect::axes(Val::Px(16.0), Val::Px(6.0)),
-                    border_radius: BorderRadius::all(CornerRadius::circular(Val::Px(6.0))),
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    padding: UiRect::axes(Val::Px(14.0), Val::Px(14.0)),
+                    row_gap: Val::Px(10.0),
+                    border: UiRect::all(Val::Px(1.0)),
+                    border_radius: corner(12.0),
+                    ..default()
+                },
+                BorderColor::all(GOLD_DIM),
+                bevy::picking::Pickable::IGNORE,
+            ))
+            .id();
+        commands.entity(card).add_child(inner);
+        let ribbon = commands
+            .spawn((
+                Node {
+                    padding: UiRect::axes(Val::Px(18.0), Val::Px(6.0)),
+                    border: UiRect::all(Val::Px(2.0)),
+                    border_radius: corner(4.0),
                     ..default()
                 },
                 BackgroundColor(PARCHMENT),
-                children![title(name.to_uppercase(), 20.0, INK)],
+                BorderColor::all(GOLD),
+                children![title(name.to_uppercase(), 19.0, INK)],
             ))
             .id();
-        let icon_box = commands
+        let portrait = commands
             .spawn((
                 Node {
-                    width: Val::Px(130.0),
-                    height: Val::Px(130.0),
+                    width: Val::Px(170.0),
+                    height: Val::Px(170.0),
                     align_items: AlignItems::Center,
                     justify_content: JustifyContent::Center,
                     border: UiRect::all(Val::Px(4.0)),
-                    border_radius: BorderRadius::all(CornerRadius::circular(Val::Px(65.0))),
+                    border_radius: corner(85.0),
                     ..default()
                 },
-                BackgroundColor(Color::srgb(0.07, 0.06, 0.08)),
-                BorderColor::all(frame),
+                BackgroundColor(Color::srgb(0.05, 0.04, 0.05)),
+                BorderColor::all(GOLD),
                 children![(
                     ImageNode::new(icons.get(icon)),
-                    Node { width: Val::Px(96.0), height: Val::Px(96.0), ..default() },
+                    Node { width: Val::Px(158.0), height: Val::Px(158.0), border_radius: corner(79.0), ..default() },
                 )],
             ))
             .id();
-        let tag = commands.spawn(title(tag, 14.0, Color::srgb(0.96, 0.78, 0.36))).id();
-        commands.entity(card).add_children(&[banner, icon_box, tag]);
+        let plaque = commands
+            .spawn((
+                Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(8.0), ..default() },
+                children![rule(22.0), title(tag, 13.0, GOLD), rule(22.0)],
+            ))
+            .id();
+        commands.entity(inner).add_children(&[ribbon, portrait, plaque]);
         for line in lines {
             let t = commands
-                .spawn((
-                    text(line, 19.0, Color::srgb(0.90, 0.88, 0.84)),
-                    TextLayout::justify(Justify::Center),
-                    Node { max_width: Val::Px(250.0), ..default() },
-                ))
+                .spawn((text(line, 18.0, CREAM), TextLayout::justify(Justify::Center), Node { max_width: Val::Px(250.0), ..default() }))
                 .id();
-            commands.entity(card).add_child(t);
+            commands.entity(inner).add_child(t);
         }
-        let key = commands.spawn(text(format!("[{}]", i + 1), 18.0, Color::srgba(1.0, 1.0, 1.0, 0.5))).id();
         let spacer = commands.spawn(Node { flex_grow: 1.0, ..default() }).id();
-        commands.entity(card).add_children(&[spacer, key]);
+        let key = commands
+            .spawn((
+                Node {
+                    width: Val::Px(32.0),
+                    height: Val::Px(32.0),
+                    align_items: AlignItems::Center,
+                    justify_content: JustifyContent::Center,
+                    border: UiRect::all(Val::Px(2.0)),
+                    border_radius: corner(16.0),
+                    ..default()
+                },
+                BorderColor::all(GOLD),
+                children![title(format!("{}", i + 1), 15.0, GOLD)],
+            ))
+            .id();
+        commands.entity(inner).add_children(&[spacer, key]);
         commands.entity(row).add_child(card);
     }
     let hint = if rerolls > 0 {
-        format!("Click a card or press 1 / 2 / 3      [T] Reroll ({rerolls} left)")
+        format!("Click a card or press 1, 2 or 3        T  reroll  ({rerolls} left)")
     } else {
-        "Click a card or press 1 / 2 / 3".to_string()
+        "Click a card or press 1, 2 or 3".to_string()
     };
-    let hint = commands.spawn(text(hint, 18.0, Color::srgba(1.0, 1.0, 1.0, 0.7))).id();
+    let hint = commands.spawn(text(hint, 19.0, Color::srgba(0.93, 0.88, 0.78, 0.75))).id();
     commands.entity(root).add_child(hint);
 }
 
@@ -382,7 +435,7 @@ fn pick_card(
     }
     if auto.is_some() {
         *wait += time.delta_secs();
-        if *wait > 1.2 {
+        if *wait > 1.2 && time.elapsed_secs() > 16.0 {
             *wait = 0.0;
             picked = Some(rng.0.random_range(0..choice.offers.len()));
         }

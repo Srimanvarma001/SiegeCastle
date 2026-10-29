@@ -21,6 +21,7 @@ pub enum Surface {
     Mud,
     Wheat,
     Plaster,
+    Bark,
 }
 
 pub struct SurfaceTextures {
@@ -220,19 +221,48 @@ fn iron() -> Maps {
     m
 }
 
-/// Meadow grass seen from above: blades, clover and bare specks.
+/// Meadow grass seen from above: blades of several greens, dry stalks,
+/// clover, bare soil and tiny wildflowers.
 fn grass() -> Maps {
-    let mut m = Maps::new(2.5);
+    let mut m = Maps::new(3.0);
     each(&mut m, |u, v, c, h, r, _| {
-        let blades = fbm(u, v, 128, 2, 71);
+        let blades = fbm(u * 1.0, v * 1.0, 160, 2, 71);
+        let streak = fbm(u * 3.0, v * 0.6, 64, 2, 72);
         let clumps = fbm(u, v, 24, 3, 73);
         let large = fbm(u, v, 4, 3, 75);
-        let bare = smooth(0.7, 0.85, fbm(u, v, 10, 3, 77));
-        let green = rgb(0.24, 0.33, 0.12).lerp(rgb(0.36, 0.42, 0.17), large);
-        let g = green * (0.65 + blades * 0.55) * (0.85 + clumps * 0.3);
-        *c = g.lerp(rgb(0.36, 0.30, 0.20) * (0.8 + blades * 0.3), bare * 0.6);
-        *h = blades * 0.7 + clumps * 0.3;
-        *r = 0.88 + blades * 0.1;
+        let bare = smooth(0.70, 0.86, fbm(u, v, 10, 3, 77));
+        let dry = smooth(0.55, 0.75, fbm(u, v, 14, 3, 79));
+        let clover = smooth(0.74, 0.8, fbm(u, v, 40, 2, 80));
+        let fresh = rgb(0.22, 0.32, 0.10).lerp(rgb(0.34, 0.43, 0.15), large);
+        let mut g = fresh * (0.55 + blades * 0.7) * (0.85 + clumps * 0.3) * (0.9 + streak * 0.2);
+        g = g.lerp(rgb(0.46, 0.43, 0.22) * (0.7 + blades * 0.5), dry * 0.45);
+        g = g.lerp(rgb(0.18, 0.30, 0.10), clover * 0.5);
+        g = g.lerp(rgb(0.34, 0.27, 0.18) * (0.8 + blades * 0.3), bare * 0.55);
+        // Tiny flowers.
+        let f = vnoise(u, v, 220, 82);
+        if f > 0.93 {
+            let kind = hash((u * 220.0) as i32, (v * 220.0) as i32, 83);
+            let petal = if kind < 0.5 { rgb(0.92, 0.90, 0.82) } else if kind < 0.8 { rgb(0.90, 0.78, 0.25) } else { rgb(0.55, 0.42, 0.75) };
+            g = g.lerp(petal, smooth(0.93, 0.97, f));
+        }
+        *c = g;
+        *h = blades * 0.7 + clumps * 0.3 + clover * 0.2;
+        *r = 0.9 - clover * 0.15;
+    });
+    m
+}
+
+/// Rough bark with vertical furrows.
+fn bark() -> Maps {
+    let mut m = Maps::new(6.0);
+    each(&mut m, |u, v, c, h, r, _| {
+        let furrow = fbm(u * 1.0, v * 0.15, 24, 4, 111);
+        let ridge = (furrow * 9.0).sin() * 0.5 + 0.5;
+        let lichen = smooth(0.66, 0.8, fbm(u, v, 6, 3, 113));
+        let base = rgb(0.24, 0.18, 0.13) * (0.6 + ridge * 0.6);
+        *c = base.lerp(rgb(0.42, 0.45, 0.32), lichen * 0.5);
+        *h = ridge;
+        *r = 0.95;
     });
     m
 }
@@ -300,17 +330,23 @@ fn sampler() -> ImageSampler {
 
 /// Builds an RGBA8 image with a full mip chain from a level-0 pixel function.
 fn image_with_mips(pixels: Vec<[f32; 4]>, format: TextureFormat, renormalize: bool) -> Image {
+    image_with_mips_sized(pixels, S, S, format, renormalize)
+}
+
+fn image_with_mips_sized(pixels: Vec<[f32; 4]>, w0: usize, h0: usize, format: TextureFormat, renormalize: bool) -> Image {
     let mut levels: Vec<Vec<[f32; 4]>> = vec![pixels];
-    let mut size = S;
-    while size > 1 {
+    let (mut w, mut h) = (w0, h0);
+    while w > 1 || h > 1 {
         let prev = levels.last().expect("level");
-        let half = size / 2;
-        let mut next = vec![[0.0; 4]; half * half];
-        for y in 0..half {
-            for x in 0..half {
+        let (nw, nh) = ((w / 2).max(1), (h / 2).max(1));
+        let mut next = vec![[0.0; 4]; nw * nh];
+        for y in 0..nh {
+            for x in 0..nw {
                 let mut acc = [0.0f32; 4];
                 for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-                    let p = prev[(y * 2 + dy) * size + x * 2 + dx];
+                    let sx = (x * 2 + dx).min(w - 1);
+                    let sy = (y * 2 + dy).min(h - 1);
+                    let p = prev[sy * w + sx];
                     for k in 0..4 {
                         acc[k] += p[k] * 0.25;
                     }
@@ -319,11 +355,12 @@ fn image_with_mips(pixels: Vec<[f32; 4]>, format: TextureFormat, renormalize: bo
                     let n = Vec3::new(acc[0] * 2.0 - 1.0, acc[1] * 2.0 - 1.0, acc[2] * 2.0 - 1.0).normalize_or(Vec3::Z);
                     acc = [n.x * 0.5 + 0.5, n.y * 0.5 + 0.5, n.z * 0.5 + 0.5, 1.0];
                 }
-                next[y * half + x] = acc;
+                next[y * nw + x] = acc;
             }
         }
         levels.push(next);
-        size = half;
+        w = nw;
+        h = nh;
     }
     let count = levels.len() as u32;
     let data: Vec<u8> = levels
@@ -332,9 +369,9 @@ fn image_with_mips(pixels: Vec<[f32; 4]>, format: TextureFormat, renormalize: bo
         .flat_map(|p| p.map(|v| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8))
         .collect();
     let mut img = Image::new(
-        Extent3d { width: S as u32, height: S as u32, depth_or_array_layers: 1 },
+        Extent3d { width: w0 as u32, height: h0 as u32, depth_or_array_layers: 1 },
         TextureDimension::D2,
-        vec![0; S * S * 4],
+        vec![0; w0 * h0 * 4],
         format,
         RenderAssetUsages::RENDER_WORLD,
     );
@@ -378,6 +415,210 @@ pub fn build(surface: Surface, images: &mut Assets<Image>) -> SurfaceTextures {
         Surface::Mud => mud(),
         Surface::Wheat => wheat(),
         Surface::Plaster => plaster(),
+        Surface::Bark => bark(),
     };
     upload(maps, images)
+}
+
+// --- Foliage and roads (with transparency) -------------------------------------
+
+struct Rgba {
+    w: usize,
+    h: usize,
+    px: Vec<[f32; 4]>,
+}
+
+impl Rgba {
+    fn new(w: usize, h: usize) -> Self {
+        Self { w, h, px: vec![[0.0; 4]; w * h] }
+    }
+
+    fn blend(&mut self, x: i32, y: i32, c: Vec3, a: f32) {
+        if x < 0 || y < 0 || x >= self.w as i32 || y >= self.h as i32 || a <= 0.0 {
+            return;
+        }
+        let p = &mut self.px[y as usize * self.w + x as usize];
+        let keep = 1.0 - a;
+        p[0] = p[0] * keep + c.x * a;
+        p[1] = p[1] * keep + c.y * a;
+        p[2] = p[2] * keep + c.z * a;
+        p[3] = p[3].max(a);
+    }
+
+    /// A pointed leaf shape (or needle/blade) from `base` along `angle`.
+    fn leaf(&mut self, base: Vec2, angle: f32, len: f32, wid: f32, c: Vec3, rib: bool) {
+        let dir = Vec2::from_angle(angle);
+        let side = Vec2::new(-dir.y, dir.x);
+        let r = len.max(wid) + 2.0;
+        for y in (base.y - r) as i32..=(base.y + r) as i32 {
+            for x in (base.x - r) as i32..=(base.x + r) as i32 {
+                let d = Vec2::new(x as f32 + 0.5, y as f32 + 0.5) - base;
+                let t = d.dot(dir) / len;
+                if !(0.0..=1.0).contains(&t) {
+                    continue;
+                }
+                let half = wid * 0.5 * (std::f32::consts::PI * t).sin().powf(0.8);
+                let across = d.dot(side);
+                let cover = (half - across.abs() + 0.7).clamp(0.0, 1.0);
+                if cover <= 0.0 {
+                    continue;
+                }
+                // Lit on one side, darker midrib.
+                let mut col = c * (0.85 + 0.25 * (across / wid.max(0.1)).clamp(-0.5, 0.5) * 2.0 * 0.5 + 0.1 * (1.0 - t));
+                if rib && across.abs() < 0.9 {
+                    col *= 0.75;
+                }
+                self.blend(x, y, col, cover);
+            }
+        }
+    }
+
+    fn line(&mut self, a: Vec2, b: Vec2, w0: f32, w1: f32, c: Vec3) {
+        let ab = b - a;
+        let len2 = ab.length_squared().max(0.001);
+        let r = w0.max(w1) + 1.0;
+        let (minx, maxx) = (a.x.min(b.x) - r, a.x.max(b.x) + r);
+        let (miny, maxy) = (a.y.min(b.y) - r, a.y.max(b.y) + r);
+        for y in miny as i32..=maxy as i32 {
+            for x in minx as i32..=maxx as i32 {
+                let p = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
+                let t = ((p - a).dot(ab) / len2).clamp(0.0, 1.0);
+                let w = w0 + (w1 - w0) * t;
+                let d = (p - a - ab * t).length();
+                let cover = (w * 0.5 - d + 0.6).clamp(0.0, 1.0);
+                self.blend(x, y, c, cover);
+            }
+        }
+    }
+
+    fn disc(&mut self, c0: Vec2, r: f32, c: Vec3) {
+        for y in (c0.y - r - 1.0) as i32..=(c0.y + r + 1.0) as i32 {
+            for x in (c0.x - r - 1.0) as i32..=(c0.x + r + 1.0) as i32 {
+                let d = (Vec2::new(x as f32 + 0.5, y as f32 + 0.5) - c0).length();
+                self.blend(x, y, c, (r - d + 0.6).clamp(0.0, 1.0));
+            }
+        }
+    }
+}
+
+/// Small deterministic random numbers for painting.
+struct Dice(u32);
+
+impl Dice {
+    fn next(&mut self) -> f32 {
+        self.0 = self.0.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (self.0 >> 8) as f32 / 16_777_216.0
+    }
+    fn range(&mut self, a: f32, b: f32) -> f32 {
+        a + (b - a) * self.next()
+    }
+}
+
+/// Foliage atlas, 1024x1024 in four 512 cells:
+/// top-left broadleaf cluster, top-right lighter broadleaf,
+/// bottom-left fir branch, bottom-right grass blades with wildflowers.
+pub fn foliage(images: &mut Assets<Image>) -> Handle<Image> {
+    let mut c = Rgba::new(1024, 1024);
+    let mut d = Dice(12345);
+    for (cell, (dark, light)) in [(0usize, (rgb(0.14, 0.24, 0.08), rgb(0.30, 0.42, 0.14))), (1, (rgb(0.22, 0.32, 0.10), rgb(0.42, 0.50, 0.18)))] {
+        let origin = Vec2::new(cell as f32 * 512.0, 0.0);
+        let center = origin + Vec2::splat(256.0);
+        for _ in 0..9 {
+            let a = d.range(0.0, std::f32::consts::TAU);
+            c.line(center, center + Vec2::from_angle(a) * d.range(120.0, 200.0), 7.0, 2.0, rgb(0.20, 0.14, 0.09));
+        }
+        for i in 0..230 {
+            let a = d.range(0.0, std::f32::consts::TAU);
+            let r = d.next().sqrt() * 190.0;
+            let p = center + Vec2::from_angle(a) * r;
+            let len = d.range(34.0, 56.0);
+            let wid = d.range(15.0, 23.0);
+            // Brighter toward the top-left, as if lit by the sun.
+            let lit = ((-(p - center).x - (p - center).y) / 380.0 + 0.5).clamp(0.0, 1.0);
+            let k = d.next() * 0.5 + lit * 0.5 + (i as f32 / 230.0) * 0.2;
+            let col = dark.lerp(light, k.clamp(0.0, 1.0));
+            c.leaf(p, a + d.range(-0.8, 0.8), len, wid, col, true);
+        }
+    }
+    // Fir branch.
+    {
+        let origin = Vec2::new(0.0, 512.0);
+        let base = origin + Vec2::new(256.0, 495.0);
+        let tip = origin + Vec2::new(250.0, 25.0);
+        c.line(base, tip, 9.0, 2.0, rgb(0.22, 0.16, 0.10));
+        for i in 0..170 {
+            let t = i as f32 / 170.0;
+            let p = base.lerp(tip, t);
+            let len = (1.0 - t * 0.6) * d.range(70.0, 110.0);
+            for s in [-1.0f32, 1.0] {
+                let a = -std::f32::consts::FRAC_PI_2 + s * d.range(0.9, 1.25);
+                let col = rgb(0.07, 0.16, 0.09).lerp(rgb(0.16, 0.28, 0.14), d.next());
+                c.leaf(p, a, len, 5.0, col, false);
+            }
+        }
+    }
+    // Grass blades with a few wildflowers.
+    {
+        let origin = Vec2::new(512.0, 512.0);
+        for _ in 0..260 {
+            let x = d.range(40.0, 472.0);
+            let base = origin + Vec2::new(x, 506.0);
+            let h = d.range(160.0, 440.0);
+            let bend = d.range(-0.35, 0.35);
+            let a = -std::f32::consts::FRAC_PI_2 + bend;
+            let col = rgb(0.16, 0.28, 0.08).lerp(rgb(0.45, 0.48, 0.18), d.next());
+            c.leaf(base, a, h, d.range(6.0, 11.0), col, false);
+        }
+        for _ in 0..12 {
+            let x = d.range(60.0, 452.0);
+            let top = origin + Vec2::new(x, d.range(120.0, 300.0));
+            c.line(top, Vec2::new(top.x, origin.y + 506.0), 3.0, 3.0, rgb(0.18, 0.30, 0.10));
+            let petal = match (d.next() * 3.0) as i32 {
+                0 => rgb(0.95, 0.94, 0.88),
+                1 => rgb(0.96, 0.80, 0.22),
+                _ => rgb(0.58, 0.44, 0.80),
+            };
+            for k in 0..6 {
+                let a = k as f32 / 6.0 * std::f32::consts::TAU;
+                c.disc(top + Vec2::from_angle(a) * 9.0, 8.0, petal);
+            }
+            c.disc(top, 6.0, rgb(0.85, 0.65, 0.15));
+        }
+    }
+    let mut img = image_with_mips_sized(c.px, 1024, 1024, TextureFormat::Rgba8UnormSrgb, false);
+    // Keep atlas cells from bleeding into each other.
+    if let ImageSampler::Descriptor(s) = &mut img.sampler {
+        s.address_mode_u = ImageAddressMode::ClampToEdge;
+        s.address_mode_v = ImageAddressMode::ClampToEdge;
+    }
+    images.add(img)
+}
+
+/// Dirt road: soft grassy edges, two wheel ruts and a grass strip in the middle.
+/// U runs across the road (0..1), V along it (tiles).
+pub fn road(images: &mut Assets<Image>) -> Handle<Image> {
+    let (w, h) = (256usize, 512usize);
+    let mut px = Vec::with_capacity(w * h);
+    for y in 0..h {
+        for x in 0..w {
+            let (u, v) = (x as f32 / w as f32, y as f32 / h as f32);
+            let n = fbm(u * 0.25, v, 8, 4, 121);
+            let fine = fbm(u * 0.5, v, 64, 2, 123);
+            let edge = 0.12 + n * 0.12;
+            let alpha = smooth(0.0, edge, u) * smooth(0.0, edge, 1.0 - u);
+            let rut = (1.0 - ((u - 0.3).abs() / 0.07).min(1.0)).max(1.0 - ((u - 0.7).abs() / 0.07).min(1.0));
+            let middle = 1.0 - ((u - 0.5).abs() / 0.09).min(1.0);
+            let mut c = rgb(0.42, 0.33, 0.22) * (0.75 + fine * 0.45);
+            c = c.lerp(rgb(0.26, 0.19, 0.13), rut * 0.7);
+            c = c.lerp(rgb(0.30, 0.36, 0.16) * (0.7 + fine * 0.5), middle * 0.55 * smooth(0.4, 0.6, n));
+            let pebble = smooth(0.8, 0.86, vnoise(u * 0.5, v, 96, 125));
+            c = c.lerp(rgb(0.62, 0.58, 0.52), pebble * 0.6);
+            px.push([c.x, c.y, c.z, alpha]);
+        }
+    }
+    let mut img = image_with_mips_sized(px, w, h, TextureFormat::Rgba8UnormSrgb, false);
+    if let ImageSampler::Descriptor(s) = &mut img.sampler {
+        s.address_mode_u = ImageAddressMode::ClampToEdge;
+    }
+    images.add(img)
 }

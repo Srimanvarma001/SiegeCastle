@@ -45,13 +45,43 @@ pub struct Sheep {
 struct Water {
     ponds: Vec<(Vec2, f32)>,
     river: Vec<Vec2>,
+    /// Dirt road center lines (kept clear of trees and farms).
+    roads: Vec<Vec2>,
 }
 
 impl Water {
     fn near(&self, p: Vec2, margin: f32) -> bool {
         self.ponds.iter().any(|(c, r)| c.distance(p) < r + margin)
             || self.river.iter().any(|q| q.distance(p) < 2.5 + margin)
+            || self.roads.iter().any(|q| q.distance(p) < 2.0 + margin)
     }
+}
+
+/// A winding road from one map edge to the other through a few waypoints.
+fn make_road(rng: &mut GameRng, horizontal: bool) -> Vec<Vec2> {
+    let edge = MAP_HALF + 20.0;
+    let mut way = Vec::new();
+    let n = 5;
+    for i in 0..=n {
+        let t = -edge + 2.0 * edge * i as f32 / n as f32;
+        let off = rng.0.random_range(-140.0..140.0);
+        way.push(if horizontal { Vec2::new(t, off) } else { Vec2::new(off, t) });
+    }
+    // Catmull-Rom through the waypoints, one point every ~2 m.
+    let mut out = Vec::new();
+    for i in 0..way.len() - 1 {
+        let p0 = way[i.saturating_sub(1)];
+        let (p1, p2) = (way[i], way[i + 1]);
+        let p3 = way[(i + 2).min(way.len() - 1)];
+        let steps = (p1.distance(p2) / 2.0) as i32;
+        for k in 0..steps {
+            let t = k as f32 / steps as f32;
+            let t2 = t * t;
+            let t3 = t2 * t;
+            out.push(0.5 * ((2.0 * p1) + (-p0 + p2) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t2 + (-p0 + 3.0 * p1 - 3.0 * p2 + p3) * t3));
+        }
+    }
+    out
 }
 
 // --- Noise for soft color patches ------------------------------------------
@@ -142,8 +172,14 @@ fn spawn_world(
 ) {
     let seed: u32 = rng.0.random();
 
-    // Water first, so everything else can avoid it.
+    // Water and roads first, so everything else can avoid them.
     let mut water = Water::default();
+    let mut roads = Vec::new();
+    for horizontal in [true, false, true] {
+        let r = make_road(&mut rng, horizontal);
+        water.roads.extend(r.iter().copied());
+        roads.push(r);
+    }
     for _ in 0..7 {
         let c = Vec2::new(rng.0.random_range(-190.0..190.0), rng.0.random_range(-190.0..190.0));
         if c.length() > 40.0 {
@@ -185,6 +221,17 @@ fn spawn_world(
         c
     });
     commands.spawn((GameEntity, Mesh3d(meshes.add(ground)), MeshMaterial3d(assets.m.grass.clone()), Transform::IDENTITY, NotShadowCaster));
+
+    // Dirt roads (soft edges blend into the grass).
+    for (i, r) in roads.iter().enumerate() {
+        commands.spawn((
+            GameEntity,
+            Mesh3d(meshes.add(art::road_mesh(r, 3.6, 0.02 + i as f32 * 0.004))),
+            MeshMaterial3d(assets.m.road.clone()),
+            Transform::IDENTITY,
+            NotShadowCaster,
+        ));
+    }
 
     // Water meshes.
     for &(c, r) in &water.ponds {
@@ -261,11 +308,19 @@ fn spawn_world(
         }
         t += 4.5;
     }
-    for _ in 0..5000 {
+    for _ in 0..1600 {
+        let p = Vec2::new(rng.0.random_range(-215.0..215.0), rng.0.random_range(-215.0..215.0));
+        if free(p) {
+            let k = chunk_of(p);
+            models::add_bush(&mut solid[k], w3(p, 0.0), rng.0.random_range(0.8..1.5), rng.0.random());
+            has_solid[k] = true;
+        }
+    }
+    for _ in 0..9000 {
         let p = Vec2::new(rng.0.random_range(-218.0..218.0), rng.0.random_range(-218.0..218.0));
         if !w.near(p, 1.0) {
             let k = chunk_of(p);
-            models::add_tuft(&mut grass[k], w3(p, 0.0), rng.0.random_range(0.7..1.4));
+            models::add_grass(&mut grass[k], w3(p, 0.0), rng.0.random_range(0.8..1.6), rng.0.random());
             has_grass[k] = true;
         }
     }

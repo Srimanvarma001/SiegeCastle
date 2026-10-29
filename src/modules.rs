@@ -181,9 +181,34 @@ fn auto_attacks(
                 }
                 t.auto = if fired { m.kind.auto_cooldown() } else { 0.15 };
             }
+            ModuleKind::Ballista => {
+                // A boss in range first, otherwise the nearest enemy.
+                let target = boss.or_else(|| {
+                    nearest_n(&grid, from2, range, 1).first().map(|g| (g.pos, enemies.get(g.entity).map(|e| e.vel).unwrap_or_default()))
+                });
+                let Some((tpos, tvel)) = target else {
+                    t.auto = 0.15;
+                    continue;
+                };
+                t.auto = m.kind.auto_cooldown() * 0.9f32.powi(m.level as i32 - 1);
+                let lead = tpos + tvel * (tpos.distance(from2) / 60.0);
+                let dir = (lead - from2).normalize_or(fwd);
+                fire_bolt(&mut commands, &assets, from2, dir, dmg, 4 + m.level * 2, range / 60.0);
+            }
             ModuleKind::Ram => {}
         }
     }
+}
+
+fn fire_bolt(commands: &mut Commands, assets: &GameAssets, from: Vec2, dir: Vec2, dmg: f32, pierce: u32, life: f32) {
+    commands.spawn((
+        GameEntity,
+        Bullet::friendly(dir * 60.0, dmg, 0.5, pierce, life),
+        Mesh3d(assets.arrow.clone()),
+        MeshMaterial3d(assets.m.vc.clone()),
+        Transform::from_translation(w3(from, 2.0)).with_rotation(crate::art::yaw(dir.to_angle())).with_scale(Vec3::splat(2.4)),
+        NotShadowCaster,
+    ));
 }
 
 fn drop_mine(commands: &mut Commands, assets: &GameAssets, at: Vec2, dmg: f32, radius: f32) {
@@ -267,6 +292,14 @@ fn use_abilities(
                     let r = c.radius + rng.0.random_range(1.0..12.0);
                     drop_mine(&mut commands, &assets, cpos + Vec2::from_angle(a) * r, dmg, 3.4 * stats.area);
                 }
+            }
+            ModuleKind::Ballista => {
+                let n = 9 + m.level;
+                for b in 0..n {
+                    let a = fwd.to_angle() + (b as f32 / (n - 1) as f32 - 0.5) * 1.1;
+                    fire_bolt(&mut commands, &assets, p2(from), Vec2::from_angle(a), dmg * 1.3, 8 + m.level, 1.0);
+                }
+                shake.0 += 0.4;
             }
             ModuleKind::Broadside => {
                 let side = Vec2::new(-fwd.y, fwd.x);

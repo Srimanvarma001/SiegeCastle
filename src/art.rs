@@ -142,3 +142,34 @@ pub fn ribbon_mesh(points: &[Vec2], width: f32, height: f32, color: Color) -> Me
         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, vec![c; count])
         .with_inserted_indices(Indices::U32(idx))
 }
+
+/// Road ribbon: U runs across (0..1), V along the road in 6 m repeats.
+pub fn road_mesh(points: &[Vec2], width: f32, height: f32) -> Mesh {
+    let mut pos = Vec::new();
+    let mut uv = Vec::new();
+    let mut idx = Vec::new();
+    let mut dist = 0.0;
+    for (i, p) in points.iter().enumerate() {
+        if i > 0 {
+            dist += points[i - 1].distance(*p);
+        }
+        let prev = points[i.saturating_sub(1)];
+        let next = points[(i + 1).min(points.len() - 1)];
+        let dir = (next - prev).normalize_or(Vec2::X);
+        let side = Vec2::new(-dir.y, dir.x) * width / 2.0;
+        pos.push(w3(*p + side, height).to_array());
+        pos.push(w3(*p - side, height).to_array());
+        uv.push([0.0, dist / 6.0]);
+        uv.push([1.0, dist / 6.0]);
+        if i > 0 {
+            let b = (i as u32 - 1) * 2;
+            idx.extend_from_slice(&[b, b + 2, b + 1, b + 1, b + 2, b + 3]);
+        }
+    }
+    let count = pos.len();
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, pos)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0, 1.0, 0.0]; count])
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uv)
+        .with_inserted_indices(Indices::U32(idx))
+}

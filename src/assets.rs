@@ -51,6 +51,8 @@ pub struct GameAssets {
     pub cube: Handle<Mesh>,
     pub disc: Handle<Mesh>,
     pub ring: Handle<Mesh>,
+    /// Flat quad for wheel ruts (soft-edged road texture across it).
+    pub rut: Handle<Mesh>,
     pub mats: HashMap<Mat, Handle<StandardMaterial>>,
     pub m: Mats,
 }
@@ -102,6 +104,10 @@ pub struct Mats {
     pub cannonball: Handle<StandardMaterial>,
     pub stone: Handle<StandardMaterial>,
     pub grass: Handle<StandardMaterial>,
+    pub road: Handle<StandardMaterial>,
+    /// Smoke at decreasing opacity, swapped in as a puff ages.
+    pub smoke_fade: Vec<Handle<StandardMaterial>>,
+    pub smoke_dark_fade: Vec<Handle<StandardMaterial>>,
 }
 
 /// Meters covered by one repeat of each texture.
@@ -115,6 +121,7 @@ fn tile_size(s: Surface) -> f32 {
         Surface::Mud => 3.0,
         Surface::Wheat => 3.0,
         Surface::Plaster => 3.0,
+        Surface::Bark => 1.5,
     }
 }
 
@@ -130,11 +137,11 @@ fn textured(tex: &texgen::SurfaceTextures, tile: f32, extra: StandardMaterial) -
     }
 }
 
-fn upload(meshes: &mut Assets<Mesh>, mats: &HashMap<Mat, Handle<StandardMaterial>>, model: Model) -> ModelHandle {
+pub fn upload(meshes: &mut Assets<Mesh>, mats: &HashMap<Mat, Handle<StandardMaterial>>, model: Model) -> ModelHandle {
     ModelHandle(model.build().into_iter().map(|(m, mesh)| (meshes.add(mesh), mats[&m].clone())).collect())
 }
 
-fn create_assets(
+pub fn create_assets(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
@@ -144,9 +151,11 @@ fn create_assets(
 ) {
     // Surfaces.
     let mut tex: HashMap<Surface, texgen::SurfaceTextures> = HashMap::default();
-    for s in [Surface::Stone, Surface::Slate, Surface::Wood, Surface::Iron, Surface::Grass, Surface::Mud, Surface::Wheat, Surface::Plaster] {
+    for s in [Surface::Stone, Surface::Slate, Surface::Wood, Surface::Iron, Surface::Grass, Surface::Mud, Surface::Wheat, Surface::Plaster, Surface::Bark] {
         tex.insert(s, texgen::build(s, &mut images));
     }
+    let foliage = texgen::foliage(&mut images);
+    let road_tex = texgen::road(&mut images);
     let mut mats: HashMap<Mat, Handle<StandardMaterial>> = HashMap::default();
     for m in Mat::ALL {
         let mat = match m.surface() {
@@ -166,6 +175,21 @@ fn create_assets(
                     ..default()
                 },
                 Mat::Leaf => StandardMaterial { base_color: Color::WHITE, perceptual_roughness: 0.85, reflectance: 0.3, ..default() },
+                Mat::Foliage => StandardMaterial {
+                    base_color_texture: Some(foliage.clone()),
+                    alpha_mode: AlphaMode::Mask(0.45),
+                    double_sided: true,
+                    cull_mode: None,
+                    perceptual_roughness: 0.8,
+                    reflectance: 0.25,
+                    ..default()
+                },
+                Mat::Bronze => StandardMaterial {
+                    base_color: Color::srgb(0.62, 0.45, 0.25),
+                    metallic: 1.0,
+                    perceptual_roughness: 0.32,
+                    ..default()
+                },
                 Mat::Cloth => StandardMaterial {
                     base_color: Color::WHITE,
                     perceptual_roughness: 0.95,
@@ -218,7 +242,14 @@ fn create_assets(
         spark: materials.add(glow(Color::srgb(1.0, 0.85, 0.5), LinearRgba::rgb(7.0, 4.0, 1.2))),
         smoke: materials.add(soft(Color::srgb(0.82, 0.81, 0.79), 0.38)),
         smoke_dark: materials.add(soft(Color::srgb(0.16, 0.14, 0.13), 0.6)),
-        track: materials.add(StandardMaterial { base_color: Color::srgb(0.8, 0.75, 0.72), ..mud.clone() }),
+        track: materials.add(StandardMaterial {
+            base_color: Color::srgba(0.85, 0.8, 0.75, 0.85),
+            base_color_texture: Some(road_tex.clone()),
+            alpha_mode: AlphaMode::Blend,
+            perceptual_roughness: 0.95,
+            cull_mode: None,
+            ..default()
+        }),
         scorch: materials.add(StandardMaterial { base_color: Color::srgb(0.25, 0.2, 0.18), ..mud.clone() }),
         dirt: materials.add(mud),
         debris: mats[&Mat::Wood].clone(),
@@ -244,6 +275,15 @@ fn create_assets(
         }),
         stone: mats[&Mat::Stone].clone(),
         grass: materials.add(textured(&tex[&Surface::Grass], tile_size(Surface::Grass), StandardMaterial::default())),
+        smoke_fade: [0.42, 0.34, 0.26, 0.18, 0.1].iter().map(|a| materials.add(soft(Color::srgb(0.84, 0.83, 0.81), *a))).collect(),
+        smoke_dark_fade: [0.6, 0.48, 0.36, 0.24, 0.12].iter().map(|a| materials.add(soft(Color::srgb(0.16, 0.14, 0.13), *a))).collect(),
+        road: materials.add(StandardMaterial {
+            base_color_texture: Some(road_tex.clone()),
+            alpha_mode: AlphaMode::Blend,
+            perceptual_roughness: 0.95,
+            cull_mode: None,
+            ..default()
+        }),
     };
 
     let fonts = Fonts {
@@ -270,6 +310,7 @@ fn create_assets(
         cube: meshes.add(Cuboid::from_size(Vec3::ONE)),
         disc: meshes.add(Cylinder::new(0.5, 1.0).mesh().resolution(20).build()),
         ring: meshes.add(Torus::new(0.85, 1.0)),
+        rut: meshes.add(art::road_mesh(&[Vec2::new(-0.5, 0.0), Vec2::new(0.5, 0.0)], 1.0, 0.0)),
         mats,
         m,
     });

@@ -53,15 +53,16 @@ sudo apt install pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcomm
 
 Growing fully repairs the castle and blasts nearby enemies away.
 
-**Weapon modules.** Each has an automatic attack plus an ability on its key. Picking one again levels it up, to a maximum of level 5.
+**Weapon modules** (6). Each has an automatic attack plus an ability on its key. Picking one again levels it up, to a maximum of level 5.
 
 | Module | Slot | Automatic | Ability |
 |---|---|---|---|
-| Arrow Loft | Top | Volleys of arcing arrows | Arrow Storm: arrows rain all around |
-| Bombard | Top | Explosive shells into crowds | Carpet Shelling: a line of shells behind you |
-| Spiked Ram | Front | Driving into enemies hurts them, more at speed | Charge: speed burst with triple ram damage |
+| Archer Loft | Top | Archers on a covered hoarding fire arcing volleys | Arrow Storm: arrows rain all around |
+| Ballista | Top | Heavy bolts that skewer whole ranks at long range | Bolt Storm: a fan of bolts ahead |
+| Bronze Bombard | Top | Explosive shells into crowds | Carpet Shelling: a line of shells behind you |
+| Battering Ram | Front | Driving into enemies hurts them, more at speed | Charge: speed burst with triple ram damage |
 | Mine Chute | Back | Drops mines as you drive | Minefield: a dozen mines at once |
-| Broadside Guns | Sides | Piercing cannonballs to both sides | Full Broadside: a wide volley each side |
+| Bronze Cannons | Sides | Piercing cannonballs to both sides | Full Broadside: a wide volley each side |
 
 **Artifacts** (stack up to 5 times): Whetstone (damage), Greased Axles (speed), Lodestone (coin magnet), Reinforced Hull (health), Quick Hands (attack speed), Black Powder (explosion size), Hawk Eye (range), Tinker's Kit (ability cooldowns), Herbal Poultice (repair over time), Golden Fleece (XP), Nitro Tank (nitro), Iron Spikes (enemies touching your walls take damage).
 
@@ -83,6 +84,9 @@ Everything is generated in code, with no art files to download:
 
 - **Gothic castle:** round towers with corbelled parapets and steep slate spires, a great hall with buttresses, lancet windows and a rose window, curtain walls with battlements, a gatehouse with a portcullis, and a clock tower at stage 3. It all rides on a timber-and-iron siege platform.
 - **Realistic materials:** cut limestone blocks with mortar, overlapping slate shingles with moss, weathered planks, forged iron with rust, meadow grass, mud, wheat and plaster. Each surface has color, relief (normal map) and roughness/metal maps, tiles seamlessly, and has mipmaps for crisp distance views.
+- **Countryside:** trees, firs and bushes built from leaf, needle and grass cards with a generated foliage texture; grass tufts with wildflowers; winding dirt roads with wheel ruts; farmsteads with timber-framed houses and wheat fields; ponds and a river.
+- **Weapons:** a bronze cannon on a spoked-wheel carriage, a torsion ballista, archers drawing longbows on a covered hoarding, a bronze mortar, and a covered battering ram.
+- **Cards:** velvet-and-gold level-up cards (crimson for weapons, sapphire for artifacts, emerald for castle growth) showing real 3D renders of each item, made in an off-screen studio at startup.
 - **Lighting:** a warm late-afternoon sun with soft cascaded shadows, cool sky light, screen-space ambient occlusion, distance haze, bloom on fire, and SMAA anti-aliasing.
 - **UI:** Cinzel titles and EB Garamond text (both under the SIL Open Font License, see `assets/fonts/`).
 
@@ -102,7 +106,8 @@ src/
   art.rs          coordinates, castle mount points, terrain meshes
   models.rs       every 3D model (castle, troops, bosses, farms, trees)
   texgen.rs       realistic stone/slate/wood/iron/grass textures, made in code
-  icons.rs        UI icons
+  icons.rs        fallback UI icons
+  previews.rs     3D portraits of weapons, artifacts and castles for the cards
   assets.rs       builds models and materials once at startup
   items.rs        modules, artifacts, castle stages, stat math
   player.rs       castle driving, nitro, health, looks, growth

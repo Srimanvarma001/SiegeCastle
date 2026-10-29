@@ -195,12 +195,12 @@ fn take_shot(commands: &mut Commands, dir: &str, name: &str) {
     commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
 }
 
-fn choice_shot(mut commands: Commands, mut cfg: ResMut<DebugConfig>, mut frames: Local<u32>) {
+fn choice_shot(mut commands: Commands, mut cfg: ResMut<DebugConfig>, mut frames: Local<u32>, time: Res<Time<Real>>) {
     if !cfg.shot_choice {
         return;
     }
     *frames += 1;
-    if *frames > 2 {
+    if *frames > 2 && time.elapsed_secs() > 14.0 {
         cfg.shot_choice = false;
         let dir = cfg.shot_dir.clone();
         take_shot(&mut commands, &dir, "choice");

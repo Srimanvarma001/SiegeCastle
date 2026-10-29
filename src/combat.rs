@@ -440,7 +440,7 @@ pub fn spawn_fx(commands: &mut Commands, assets: &GameAssets, kind: FxKind, pos:
         FxKind::Debris => (&assets.cube, &m.debris, 1.0, Vec3::splat(size)),
         FxKind::Scorch => (&assets.disc, &m.scorch, 9.0, Vec3::new(size, 0.02, size)),
         FxKind::Blood => (&assets.disc, &m.blood, 6.0, Vec3::new(size, 0.02, size)),
-        FxKind::Track => (&assets.cube, &m.track, 7.0, Vec3::new(size * 2.0, 0.02, size)),
+        FxKind::Track => (&assets.rut, &m.track, 7.0, Vec3::new(size * 2.4, 1.0, size * 1.4)),
         FxKind::Dirt => (&assets.cube, &m.dirt, 60.0, Vec3::new(size, 0.03, size * 0.8)),
         FxKind::Telegraph { dur } => (&assets.ring, &m.telegraph, dur, Vec3::splat(size * 0.2)),
     };
@@ -463,9 +463,14 @@ pub fn spawn_fx_rot(commands: &mut Commands, assets: &GameAssets, kind: FxKind, 
     e
 }
 
-fn update_fx(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &mut Transform, &mut Fx)>) {
+fn update_fx(
+    mut commands: Commands,
+    time: Res<Time>,
+    assets: Res<GameAssets>,
+    mut q: Query<(Entity, &mut Transform, &mut Fx, &mut MeshMaterial3d<StandardMaterial>)>,
+) {
     let dt = time.delta_secs();
-    for (e, mut tf, mut fx) in &mut q {
+    for (e, mut tf, mut fx, mut mat) in &mut q {
         fx.life -= dt;
         if fx.life <= 0.0 {
             commands.entity(e).despawn();
@@ -481,8 +486,13 @@ fn update_fx(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &mut
             FxKind::Smoke | FxKind::DarkSmoke => {
                 tf.translation += fx.vel * dt;
                 fx.vel *= (-1.5 * dt).exp();
-                let k = if age < 0.3 { 0.5 + age / 0.3 * 0.5 } else { 1.0 - (age - 0.3) / 0.7 };
-                tf.scale = Vec3::splat(s * k.max(0.01));
+                // Puffs swell as they rise and fade out.
+                tf.scale = Vec3::splat(s * (0.5 + age * 1.1));
+                let fades = if fx.kind == FxKind::Smoke { &assets.m.smoke_fade } else { &assets.m.smoke_dark_fade };
+                let i = ((age * fades.len() as f32) as usize).min(fades.len() - 1);
+                if mat.0 != fades[i] {
+                    mat.0 = fades[i].clone();
+                }
             }
             FxKind::Spark => tf.scale = Vec3::splat(s * (1.0 - age).max(0.01)),
             FxKind::Debris => {

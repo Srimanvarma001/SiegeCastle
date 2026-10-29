@@ -34,10 +34,12 @@ pub enum ModuleKind {
     Ram,
     MineLayer,
     Broadside,
+    Ballista,
 }
 
 impl ModuleKind {
-    pub const ALL: [ModuleKind; 5] = [
+    pub const ALL: [ModuleKind; 6] = [
+        ModuleKind::Ballista,
         ModuleKind::ArrowLoft,
         ModuleKind::Mortar,
         ModuleKind::Ram,
@@ -47,17 +49,18 @@ impl ModuleKind {
 
     pub fn name(self) -> &'static str {
         match self {
-            ModuleKind::ArrowLoft => "Arrow Loft",
-            ModuleKind::Mortar => "Bombard",
-            ModuleKind::Ram => "Spiked Ram",
+            ModuleKind::ArrowLoft => "Archer Loft",
+            ModuleKind::Mortar => "Bronze Bombard",
+            ModuleKind::Ram => "Battering Ram",
             ModuleKind::MineLayer => "Mine Chute",
-            ModuleKind::Broadside => "Broadside Guns",
+            ModuleKind::Broadside => "Bronze Cannons",
+            ModuleKind::Ballista => "Ballista",
         }
     }
 
     pub fn mount(self) -> Mount {
         match self {
-            ModuleKind::ArrowLoft | ModuleKind::Mortar => Mount::Top,
+            ModuleKind::ArrowLoft | ModuleKind::Mortar | ModuleKind::Ballista => Mount::Top,
             ModuleKind::Ram => Mount::Front,
             ModuleKind::MineLayer => Mount::Back,
             ModuleKind::Broadside => Mount::Side,
@@ -87,6 +90,10 @@ impl ModuleKind {
                 "Cannons fire to both sides, piercing enemy lines.",
                 "Full Broadside: a wide volley from both sides.",
             ),
+            ModuleKind::Ballista => (
+                "Hurls heavy bolts that skewer whole ranks at long range.",
+                "Bolt Storm: a fan of bolts across the field ahead.",
+            ),
         }
     }
 
@@ -98,6 +105,7 @@ impl ModuleKind {
             ModuleKind::Ram => 0.0,
             ModuleKind::MineLayer => 1.3,
             ModuleKind::Broadside => 1.7,
+            ModuleKind::Ballista => 1.6,
         }
     }
 
@@ -108,6 +116,7 @@ impl ModuleKind {
             ModuleKind::Ram => 9.0,
             ModuleKind::MineLayer => 12.0,
             ModuleKind::Broadside => 9.0,
+            ModuleKind::Ballista => 11.0,
         }
     }
 
@@ -119,6 +128,7 @@ impl ModuleKind {
             ModuleKind::Ram => 30.0,
             ModuleKind::MineLayer => 34.0,
             ModuleKind::Broadside => 22.0,
+            ModuleKind::Ballista => 36.0,
         }
     }
 
@@ -127,6 +137,7 @@ impl ModuleKind {
             ModuleKind::ArrowLoft => 30.0,
             ModuleKind::Mortar => 36.0,
             ModuleKind::Broadside => 32.0,
+            ModuleKind::Ballista => 46.0,
             _ => 0.0,
         }
     }

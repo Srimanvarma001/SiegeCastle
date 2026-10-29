@@ -24,6 +24,7 @@ mod items;
 mod models;
 mod modules;
 mod player;
+mod previews;
 mod progression;
 mod texgen;
 mod world;
@@ -135,6 +136,7 @@ fn main() {
             combat::CombatPlugin,
             director::DirectorPlugin,
             progression::ProgressionPlugin,
+            previews::PreviewsPlugin,
             hud::HudPlugin,
             debug::DebugPlugin,
         ))

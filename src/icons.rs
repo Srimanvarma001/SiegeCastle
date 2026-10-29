@@ -159,6 +159,14 @@ fn draw(icon: Icon) -> Canvas {
             }
             c.circle(32.0, 36.0, 5.0, RED);
         }
+        Icon::Module(ModuleKind::Ballista) => {
+            c.line(v(8.0, 34.0), v(56.0, 30.0), 6.0, WOOD);
+            c.line(v(40.0, 31.0), v(28.0, 6.0), 4.0, WOOD);
+            c.line(v(40.0, 31.0), v(28.0, 58.0), 4.0, WOOD);
+            c.line(v(28.0, 6.0), v(14.0, 32.0), 1.5, WHITE);
+            c.line(v(28.0, 58.0), v(14.0, 32.0), 1.5, WHITE);
+            c.tri(v(62.0, 30.0), v(54.0, 26.0), v(54.0, 35.0), IRON);
+        }
         Icon::Module(ModuleKind::Broadside) => {
             c.rect(22.0, 22.0, 42.0, 44.0, WOOD);
             c.rect(4.0, 28.0, 24.0, 38.0, DARK);
