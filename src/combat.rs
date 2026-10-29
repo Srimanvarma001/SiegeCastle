@@ -1,321 +1,510 @@
-//! Projectiles, hits, explosions, enemy deaths, XP gems and particles.
+//! Shots, explosions, mines, enemy deaths, coins and visual effects.
 
-use crate::assets::{GameAssets, shape};
-use crate::castle::Castle;
+use crate::art::{p2, w3, yaw};
+use crate::assets::GameAssets;
 use crate::enemy::{Boss, Enemy, EnemyKind};
 use crate::grid::{Grid, MAX_ENEMY_RADIUS};
-use crate::{Banner, GameEntity, GameRng, GameState, RunStats, Shake, Sim};
+use crate::items::Stats;
+use crate::player::Castle;
+use crate::progression::Progress;
+use crate::{GameEntity, GameRng, RunStats, Shake, Sim};
+use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use rand::Rng;
 
-/// Above this many gems on the ground, XP goes straight to the castle.
-const MAX_GEMS: usize = 1200;
+/// Above this many coins on the ground, XP goes straight to the castle.
+const MAX_COINS: usize = 900;
 
 pub struct CombatPlugin;
 
 impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (move_projectiles, move_enemy_shots)
-                .in_set(Sim::Combat)
-                .after(crate::castle::towers_fire),
-        )
-        .add_systems(
-            Update,
-            (enemy_deaths, collect_gems, update_particles)
-                .chain()
-                .in_set(Sim::Resolve)
-                .before(crate::castle::castle_growth),
-        );
+        app.add_message::<BossDefeated>()
+            .add_systems(Update, (update_arcs, update_bullets, update_mines).in_set(Sim::Combat))
+            .add_systems(Update, (enemy_deaths, collect_coins, update_fx).chain().in_set(Sim::Resolve));
     }
 }
 
+#[derive(Message)]
+pub struct BossDefeated(pub EnemyKind);
+
+// ---------------------------------------------------------------------------
+// Arcing shots: arrows, shells, boulders.
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, Debug)]
+pub enum Payload {
+    Arrow { dmg: f32 },
+    Shell { dmg: f32, radius: f32 },
+    EnemyArrow { dmg: f32 },
+    Boulder { dmg: f32, radius: f32 },
+}
+
 #[derive(Component)]
-pub struct Projectile {
+pub struct ArcShot {
+    from: Vec3,
+    to: Vec2,
+    t: f32,
+    dur: f32,
+    apex: f32,
+    payload: Payload,
+}
+
+pub fn spawn_arc(commands: &mut Commands, assets: &GameAssets, from: Vec3, to: Vec2, dur: f32, apex: f32, payload: Payload) {
+    let (mesh, mat, scale) = match payload {
+        Payload::Arrow { .. } => (assets.arrow.clone(), assets.m.vc.clone(), Vec3::ONE),
+        Payload::EnemyArrow { .. } => (assets.enemy_arrow.clone(), assets.m.vc.clone(), Vec3::ONE),
+        Payload::Shell { .. } => (assets.ball.clone(), assets.m.cannonball.clone(), Vec3::splat(0.8)),
+        Payload::Boulder { .. } => (assets.ball.clone(), assets.m.stone.clone(), Vec3::splat(1.8)),
+    };
+    commands.spawn((
+        GameEntity,
+        ArcShot { from, to, t: 0.0, dur: dur.max(0.05), apex, payload },
+        Mesh3d(mesh),
+        MeshMaterial3d(mat),
+        Transform::from_translation(from).with_scale(scale),
+        NotShadowCaster,
+    ));
+}
+
+fn arc_point(a: &ArcShot, f: f32) -> Vec3 {
+    let ground = p2(a.from).lerp(a.to, f);
+    let h = a.from.y * (1.0 - f) + 4.0 * a.apex * f * (1.0 - f);
+    w3(ground, h)
+}
+
+fn update_arcs(
+    mut commands: Commands,
+    time: Res<Time>,
+    grid: Res<Grid>,
+    assets: Res<GameAssets>,
+    stats: Res<Stats>,
+    mut rng: ResMut<GameRng>,
+    mut shake: ResMut<Shake>,
+    mut arcs: Query<(Entity, &mut Transform, &mut ArcShot)>,
+    mut enemies: Query<&mut Enemy>,
+    mut castle: Query<(&Transform, &mut Castle), Without<ArcShot>>,
+) {
+    let Ok((ctf, mut c)) = castle.single_mut() else {
+        return;
+    };
+    let cpos = p2(ctf.translation);
+    let dt = time.delta_secs();
+    for (e, mut tf, mut a) in &mut arcs {
+        a.t += dt;
+        let f = (a.t / a.dur).min(1.0);
+        let p = arc_point(&a, f);
+        let ahead = arc_point(&a, (f + 0.02).min(1.0));
+        let dir = (ahead - p).normalize_or(Vec3::X);
+        if f < 1.0 {
+            tf.translation = p;
+            tf.rotation = Quat::from_rotation_arc(Vec3::X, dir);
+            continue;
+        }
+        commands.entity(e).despawn();
+        let at = a.to;
+        match a.payload {
+            Payload::Arrow { dmg } => {
+                if let Some(g) = grid.nearest(at, 1.3)
+                    && let Ok(mut en) = enemies.get_mut(g.entity)
+                {
+                    en.hit(dmg);
+                }
+            }
+            Payload::Shell { dmg, radius } => {
+                damage_area(&grid, &mut enemies, at, radius, dmg, 8.0);
+                explosion(&mut commands, &assets, &mut rng, at, radius);
+                shake.0 += 0.15;
+            }
+            Payload::EnemyArrow { dmg } => {
+                if at.distance(cpos) < c.radius + 0.6 {
+                    c.hurt(dmg);
+                }
+            }
+            Payload::Boulder { dmg, radius } => {
+                if at.distance(cpos) < c.radius * 0.6 + radius {
+                    c.hurt(dmg);
+                    shake.0 += 0.8;
+                }
+                explosion(&mut commands, &assets, &mut rng, at, radius * 0.8);
+            }
+        }
+    }
+    let _ = stats;
+}
+
+// ---------------------------------------------------------------------------
+// Straight shots: cannonballs (ours and theirs).
+// ---------------------------------------------------------------------------
+
+#[derive(Component)]
+pub struct Bullet {
     pub vel: Vec2,
-    pub damage: f32,
+    pub dmg: f32,
     pub radius: f32,
-    /// Explosion radius. 0 = single target.
-    pub splash: f32,
-    /// How many extra enemies it can pass through.
     pub pierce: u32,
     pub life: f32,
-    /// Flies over everything and explodes where it lands (cannon shells).
-    pub lobbed: bool,
-    /// Only this enemy can be hit (shots aimed at a boss pass through the swarm).
-    pub only: Option<Entity>,
+    pub hostile: bool,
     hits: Vec<Entity>,
 }
 
-impl Projectile {
-    pub fn new(vel: Vec2, damage: f32, radius: f32, splash: f32, pierce: u32, life: f32) -> Self {
-        Self { vel, damage, radius, splash, pierce, life, lobbed: false, only: None, hits: Vec::new() }
+impl Bullet {
+    pub fn friendly(vel: Vec2, dmg: f32, radius: f32, pierce: u32, life: f32) -> Self {
+        Self { vel, dmg, radius, pierce, life, hostile: false, hits: Vec::new() }
+    }
+    pub fn hostile(vel: Vec2, dmg: f32, radius: f32, life: f32) -> Self {
+        Self { vel, dmg, radius, pierce: 0, life, hostile: true, hits: Vec::new() }
     }
 }
 
-#[derive(Component)]
-pub struct EnemyShot {
-    pub vel: Vec2,
-    pub damage: f32,
-    pub life: f32,
-}
-
-#[derive(Component)]
-pub struct Gem {
-    pub xp: u32,
-}
-
-#[derive(Component)]
-pub struct Particle {
-    vel: Vec2,
-    life: f32,
-    max_life: f32,
-    size: f32,
-}
-
-/// Throws `count` particles out from `pos`.
-#[allow(clippy::too_many_arguments)]
-pub fn spawn_burst(
-    commands: &mut Commands,
-    assets: &GameAssets,
-    mat: &Handle<ColorMaterial>,
-    rng: &mut GameRng,
-    pos: Vec2,
-    count: u32,
-    speed: f32,
-    size: f32,
-    life: f32,
+fn update_bullets(
+    mut commands: Commands,
+    time: Res<Time>,
+    grid: Res<Grid>,
+    mut shake: ResMut<Shake>,
+    mut bullets: Query<(Entity, &mut Transform, &mut Bullet)>,
+    mut enemies: Query<&mut Enemy>,
+    mut castle: Query<(&Transform, &mut Castle), Without<Bullet>>,
 ) {
-    for _ in 0..count {
-        let dir = Vec2::from_angle(rng.0.random::<f32>() * std::f32::consts::TAU);
-        let v = dir * speed * (0.3 + rng.0.random::<f32>() * 0.7);
-        let l = life * (0.6 + rng.0.random::<f32>() * 0.4);
-        let s = size * (0.6 + rng.0.random::<f32>() * 0.6);
-        commands.spawn((
-            GameEntity,
-            Particle { vel: v, life: l, max_life: l, size: s },
-            shape(&assets.circle, mat, pos.extend(7.0), Vec2::splat(s)),
-        ));
+    let Ok((ctf, mut c)) = castle.single_mut() else {
+        return;
+    };
+    let cpos = p2(ctf.translation);
+    let dt = time.delta_secs();
+    for (e, mut tf, mut b) in &mut bullets {
+        let start = p2(tf.translation);
+        let step = b.vel * dt;
+        b.life -= dt;
+        let end = start + step;
+        tf.translation = w3(end, tf.translation.y);
+        if b.life <= 0.0 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        if b.hostile {
+            if end.distance(cpos) < c.radius + b.radius {
+                c.hurt(b.dmg);
+                shake.0 += 0.3;
+                commands.entity(e).despawn();
+            }
+            continue;
+        }
+        // Check along the whole path so fast shots never skip enemies.
+        let n = (step.length() / (b.radius + 0.4)).ceil().clamp(1.0, 12.0) as u32;
+        let mut done = false;
+        for i in 1..=n {
+            let at = start + step * (i as f32 / n as f32);
+            let mut hit = None;
+            grid.for_each_near(at, b.radius + MAX_ENEMY_RADIUS, |g| {
+                if hit.is_none() && !b.hits.contains(&g.entity) {
+                    let reach = b.radius + g.radius;
+                    if g.pos.distance_squared(at) < reach * reach {
+                        hit = Some(g.entity);
+                    }
+                }
+            });
+            if let Some(target) = hit
+                && let Ok(mut en) = enemies.get_mut(target)
+            {
+                en.hit(b.dmg);
+                en.knock += b.vel.normalize_or(Vec2::X) * 6.0;
+                if b.pierce == 0 {
+                    done = true;
+                    break;
+                }
+                b.pierce -= 1;
+                b.hits.push(target);
+            }
+        }
+        if done {
+            commands.entity(e).despawn();
+        }
     }
 }
 
-fn damage_area(grid: &Grid, enemies: &mut Query<&mut Enemy>, pos: Vec2, radius: f32, dmg: f32) {
-    grid.for_each_near(pos, radius + MAX_ENEMY_RADIUS, |g| {
-        let reach = radius + g.radius;
-        if g.pos.distance_squared(pos) < reach * reach
-            && let Ok(mut en) = enemies.get_mut(g.entity)
-        {
-            en.hp -= dmg;
-            en.flash = 0.08;
-        }
-    });
+// ---------------------------------------------------------------------------
+// Mines
+// ---------------------------------------------------------------------------
+
+#[derive(Component)]
+pub struct Mine {
+    pub arm: f32,
+    pub life: f32,
+    pub dmg: f32,
+    pub radius: f32,
 }
 
-fn move_projectiles(
+fn update_mines(
     mut commands: Commands,
     time: Res<Time>,
     grid: Res<Grid>,
     assets: Res<GameAssets>,
     mut rng: ResMut<GameRng>,
-    mut projectiles: Query<(Entity, &mut Transform, &mut Projectile)>,
+    mut mines: Query<(Entity, &Transform, &mut Mine)>,
     mut enemies: Query<&mut Enemy>,
 ) {
     let dt = time.delta_secs();
-    for (pe, mut tf, mut p) in &mut projectiles {
-        let start = tf.translation.truncate();
-        let step = p.vel * dt;
-        p.life -= dt;
-
-        // Check along the whole path this frame so fast shots never skip
-        // over an enemy, even when a frame takes long.
-        let substeps = (step.length() / (p.radius + 8.0)).ceil().clamp(1.0, 16.0) as u32;
-        let mut hit = None;
-        let mut pos = start + step;
-        let only = p.only;
-        for i in (1..=substeps).filter(|_| !p.lobbed) {
-            let at = start + step * (i as f32 / substeps as f32);
-            grid.for_each_near(at, p.radius + MAX_ENEMY_RADIUS, |g| {
-                if hit.is_some() || p.hits.contains(&g.entity) || only.is_some_and(|o| o != g.entity) {
-                    return;
-                }
-                let reach = p.radius + g.radius;
-                if g.pos.distance_squared(at) < reach * reach
-                    && enemies.get(g.entity).is_ok_and(|e| e.hp > 0.0)
-                {
-                    hit = Some(g.entity);
-                }
-            });
-            if hit.is_some() {
-                pos = at;
-                break;
-            }
-        }
-        tf.translation.x = pos.x;
-        tf.translation.y = pos.y;
-
-        let expired = p.life <= 0.0;
-        if hit.is_none() && !expired {
+    for (e, tf, mut m) in &mut mines {
+        m.arm -= dt;
+        m.life -= dt;
+        if m.life <= 0.0 {
+            commands.entity(e).despawn();
             continue;
         }
-
-        if p.splash > 0.0 {
-            damage_area(&grid, &mut enemies, pos, p.splash, p.damage);
-            spawn_burst(&mut commands, &assets, &assets.m.spark, &mut rng, pos, 6, 220.0, 14.0, 0.3);
-            commands.entity(pe).despawn();
+        if m.arm > 0.0 {
             continue;
         }
-        let Some(target) = hit else {
-            commands.entity(pe).despawn();
-            continue;
-        };
-        if let Ok(mut en) = enemies.get_mut(target) {
-            en.hp -= p.damage;
-            en.flash = 0.08;
-        }
-        if p.pierce > 0 {
-            p.pierce -= 1;
-            p.hits.push(target);
-        } else {
-            commands.entity(pe).despawn();
-        }
-    }
-}
-
-fn move_enemy_shots(
-    mut commands: Commands,
-    time: Res<Time>,
-    mut shake: ResMut<Shake>,
-    mut shots: Query<(Entity, &mut Transform, &mut EnemyShot), Without<Castle>>,
-    mut castle: Query<(&Transform, &mut Castle)>,
-) {
-    let Ok((ctf, mut c)) = castle.single_mut() else {
-        return;
-    };
-    let cpos = ctf.translation.truncate();
-    let dt = time.delta_secs();
-    for (e, mut tf, mut s) in &mut shots {
-        tf.translation += (s.vel * dt).extend(0.0);
-        s.life -= dt;
-        let hit = tf.translation.truncate().distance(cpos) < c.radius + 8.0;
-        if hit {
-            c.hp -= s.damage;
-            shake.0 += 4.0;
-        }
-        if hit || s.life <= 0.0 {
+        let pos = p2(tf.translation);
+        if grid.nearest(pos, 1.0).is_some() {
+            damage_area(&grid, &mut enemies, pos, m.radius, m.dmg, 10.0);
+            explosion(&mut commands, &assets, &mut rng, pos, m.radius);
             commands.entity(e).despawn();
         }
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+// ---------------------------------------------------------------------------
+// Damage helpers
+// ---------------------------------------------------------------------------
+
+pub fn damage_area(grid: &Grid, enemies: &mut Query<&mut Enemy>, pos: Vec2, radius: f32, dmg: f32, knock: f32) {
+    grid.for_each_near(pos, radius + MAX_ENEMY_RADIUS, |g| {
+        let reach = radius + g.radius;
+        let d = g.pos - pos;
+        if d.length_squared() < reach * reach
+            && let Ok(mut en) = enemies.get_mut(g.entity)
+        {
+            en.hit(dmg);
+            if !en.kind.is_boss() {
+                en.knock += d.normalize_or(Vec2::X) * knock;
+            }
+        }
+    });
+}
+
+/// Fireball, smoke, flying debris and a scorch mark.
+pub fn explosion(commands: &mut Commands, assets: &GameAssets, rng: &mut GameRng, pos: Vec2, radius: f32) {
+    spawn_fx(commands, assets, FxKind::Fireball, w3(pos, 0.8), radius * 1.6, Vec3::ZERO);
+    for _ in 0..4 {
+        let off = Vec3::new(rng.0.random_range(-1.0..1.0), 0.0, rng.0.random_range(-1.0..1.0)) * radius * 0.5;
+        spawn_fx(commands, assets, FxKind::Smoke, w3(pos, 1.0) + off, radius * 0.7, Vec3::Y * 2.0 + off * 0.8);
+    }
+    for _ in 0..5 {
+        let v = Vec3::new(rng.0.random_range(-1.0..1.0), rng.0.random_range(1.0..2.0), rng.0.random_range(-1.0..1.0)) * 7.0;
+        spawn_fx(commands, assets, FxKind::Debris, w3(pos, 0.6), 0.35, v);
+    }
+    spawn_fx(commands, assets, FxKind::Scorch, w3(pos, 0.03), radius * 1.4, Vec3::ZERO);
+}
+
+// ---------------------------------------------------------------------------
+// Deaths and coins
+// ---------------------------------------------------------------------------
+
+#[derive(Component)]
+pub struct Coin {
+    xp: f32,
+}
+
 fn enemy_deaths(
     mut commands: Commands,
     assets: Res<GameAssets>,
     mut rng: ResMut<GameRng>,
     mut stats: ResMut<RunStats>,
-    mut banner: ResMut<Banner>,
     mut shake: ResMut<Shake>,
-    mut next: ResMut<NextState<GameState>>,
-    enemies: Query<(Entity, &Transform, &Enemy), With<Enemy>>,
-    bosses: Query<(), With<Boss>>,
-    gems: Query<(), With<Gem>>,
-    mut castle: Query<&mut Castle>,
+    mut progress: ResMut<Progress>,
+    mut defeated: MessageWriter<BossDefeated>,
+    enemies: Query<(Entity, &Transform, &Enemy, Option<&Boss>)>,
+    coins: Query<(), With<Coin>>,
 ) {
-    let Ok(mut c) = castle.single_mut() else {
-        return;
-    };
-    let mut gem_count = gems.iter().count();
-    for (e, tf, en) in &enemies {
+    let mut coin_count = coins.iter().count();
+    for (e, tf, en, boss) in &enemies {
         if en.hp > 0.0 {
             continue;
         }
         commands.entity(e).despawn();
         stats.kills += 1;
-        let pos = tf.translation.truncate();
-
-        if bosses.contains(e) {
-            spawn_burst(&mut commands, &assets, &assets.m.smoke, &mut rng, pos, 50, 350.0, 34.0, 1.2);
-            spawn_burst(&mut commands, &assets, &assets.m.spark, &mut rng, pos, 40, 500.0, 18.0, 0.8);
-            shake.0 += 30.0;
-            if en.kind == EnemyKind::Warlord {
-                banner.show("The Warlord has fallen!", 6.0);
-                next.set(GameState::Victory);
-            } else {
-                banner.show("Rival castle destroyed!", 3.0);
+        let pos = p2(tf.translation);
+        if let Some(b) = boss {
+            if let Some(t) = b.telegraph {
+                commands.entity(t).despawn();
             }
+            for i in 0..6 {
+                let off = Vec2::from_angle(i as f32) * en.radius * 0.6;
+                explosion(&mut commands, &assets, &mut rng, pos + off, en.radius * 0.7);
+            }
+            for _ in 0..10 {
+                let off = Vec3::new(rng.0.random_range(-1.0..1.0), 0.0, rng.0.random_range(-1.0..1.0)) * en.radius;
+                spawn_fx(&mut commands, &assets, FxKind::DarkSmoke, w3(pos, 2.0) + off, en.radius * 0.8, Vec3::Y * 3.0);
+            }
+            shake.0 += 3.0;
+            stats.bosses_killed += 1;
+            defeated.write(BossDefeated(en.kind));
         } else {
-            spawn_burst(&mut commands, &assets, &assets.m.blood, &mut rng, pos, 3, 120.0, 8.0, 0.35);
+            spawn_fx(&mut commands, &assets, FxKind::Blood, w3(pos, 0.02), 0.5 + en.radius * 0.6, Vec3::ZERO);
+            if en.kind == EnemyKind::Cart {
+                explosion(&mut commands, &assets, &mut rng, pos, 2.0);
+            }
         }
 
-        // Drop XP. Bosses drop a pile of gems.
-        let pieces = if en.kind.is_boss() { 16 } else { 1 };
-        let per = (en.xp / pieces).max(1);
+        let pieces = en.coins.min(30);
+        let value = en.coins as f32 / pieces.max(1) as f32;
         for i in 0..pieces {
-            if en.xp == 0 {
-                break;
-            }
-            if gem_count >= MAX_GEMS {
-                c.xp += per;
+            if coin_count >= MAX_COINS {
+                progress.add_xp(value);
                 continue;
             }
-            gem_count += 1;
-            let offset = if pieces > 1 {
-                Vec2::from_angle(i as f32 / pieces as f32 * std::f32::consts::TAU) * 50.0
+            coin_count += 1;
+            let off = if pieces > 1 {
+                Vec2::from_angle(i as f32 * 2.4) * (0.5 + i as f32 * 0.25).min(en.radius + 2.0)
             } else {
                 Vec2::ZERO
             };
-            let size = 8.0 + (per as f32).sqrt() * 3.0;
             commands.spawn((
                 GameEntity,
-                Gem { xp: per },
-                shape(&assets.diamond, &assets.m.gem, (pos + offset).extend(2.0), Vec2::new(size * 0.7, size)),
+                Coin { xp: value },
+                Mesh3d(assets.coin.clone()),
+                MeshMaterial3d(assets.m.coin_glow.clone()),
+                Transform::from_translation(w3(pos + off, 0.6)),
+                NotShadowCaster,
             ));
         }
     }
 }
 
-fn collect_gems(
+fn collect_coins(
     mut commands: Commands,
     time: Res<Time>,
-    mut gems: Query<(Entity, &mut Transform, &Gem), Without<Castle>>,
-    mut castle: Query<(&Transform, &mut Castle)>,
+    stats: Res<Stats>,
+    mut progress: ResMut<Progress>,
+    mut coins: Query<(Entity, &mut Transform, &Coin), Without<Castle>>,
+    castle: Query<&Transform, With<Castle>>,
 ) {
-    let Ok((ctf, mut c)) = castle.single_mut() else {
+    let Ok(ctf) = castle.single() else {
         return;
     };
-    let cpos = ctf.translation.truncate();
-    let magnet = c.def().magnet + c.radius;
+    let cpos = p2(ctf.translation);
     let dt = time.delta_secs();
-    for (e, mut tf, gem) in &mut gems {
-        let pos = tf.translation.truncate();
+    let t = time.elapsed_secs();
+    let magnet = stats.magnet + stats.radius;
+    for (e, mut tf, coin) in &mut coins {
+        let pos = p2(tf.translation);
         let d = pos.distance(cpos);
-        if d < c.radius {
-            c.xp += gem.xp;
-            commands.entity(e).despawn();
-        } else if d < magnet {
-            let step = (cpos - pos) / d * (500.0 + (magnet - d) * 4.0) * dt;
-            tf.translation += step.extend(0.0);
-        }
-    }
-}
-
-fn update_particles(
-    mut commands: Commands,
-    time: Res<Time>,
-    mut q: Query<(Entity, &mut Transform, &mut Particle)>,
-) {
-    let dt = time.delta_secs();
-    let drag = (-5.0 * dt).exp();
-    for (e, mut tf, mut p) in &mut q {
-        p.life -= dt;
-        if p.life <= 0.0 {
+        if d < stats.radius {
+            progress.add_xp(coin.xp * stats.xp_mult);
             commands.entity(e).despawn();
             continue;
         }
-        tf.translation += (p.vel * dt).extend(0.0);
-        p.vel *= drag;
-        let s = p.size * (p.life / p.max_life);
-        tf.scale = Vec3::new(s, s, 1.0);
+        let mut next = pos;
+        if d < magnet {
+            next += (cpos - pos) / d * (14.0 + (magnet - d) * 3.0) * dt;
+        }
+        tf.translation = w3(next, 0.6 + (t * 3.0 + pos.x).sin() * 0.15);
+        tf.rotation = Quat::from_rotation_y(t * 3.0 + pos.y);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Effects
+// ---------------------------------------------------------------------------
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub enum FxKind {
+    Fireball,
+    Smoke,
+    DarkSmoke,
+    Spark,
+    Debris,
+    Scorch,
+    Blood,
+    Track,
+    Dirt,
+    Telegraph { dur: f32 },
+}
+
+#[derive(Component)]
+pub struct Fx {
+    kind: FxKind,
+    life: f32,
+    max: f32,
+    vel: Vec3,
+    size: f32,
+}
+
+pub fn spawn_fx(commands: &mut Commands, assets: &GameAssets, kind: FxKind, pos: Vec3, size: f32, vel: Vec3) -> Entity {
+    let m = &assets.m;
+    let (mesh, mat, life, scale) = match kind {
+        FxKind::Fireball => (&assets.ball, &m.fire, 0.35, Vec3::splat(size * 0.4)),
+        FxKind::Smoke => (&assets.ball, &m.smoke, 1.4, Vec3::splat(size * 0.5)),
+        FxKind::DarkSmoke => (&assets.ball, &m.smoke_dark, 1.6, Vec3::splat(size * 0.5)),
+        FxKind::Spark => (&assets.ball, &m.spark, 0.25, Vec3::splat(size)),
+        FxKind::Debris => (&assets.cube, &m.debris, 1.0, Vec3::splat(size)),
+        FxKind::Scorch => (&assets.disc, &m.scorch, 9.0, Vec3::new(size, 0.02, size)),
+        FxKind::Blood => (&assets.disc, &m.blood, 6.0, Vec3::new(size, 0.02, size)),
+        FxKind::Track => (&assets.cube, &m.track, 7.0, Vec3::new(size * 2.0, 0.02, size)),
+        FxKind::Dirt => (&assets.cube, &m.dirt, 60.0, Vec3::new(size, 0.03, size * 0.8)),
+        FxKind::Telegraph { dur } => (&assets.ring, &m.telegraph, dur, Vec3::splat(size * 0.2)),
+    };
+    commands
+        .spawn((
+            GameEntity,
+            Fx { kind, life, max: life, vel, size },
+            Mesh3d(mesh.clone()),
+            MeshMaterial3d(mat.clone()),
+            Transform::from_translation(pos).with_scale(scale),
+            NotShadowCaster,
+        ))
+        .id()
+}
+
+/// Same as `spawn_fx` but facing a direction (used for tracks).
+pub fn spawn_fx_rot(commands: &mut Commands, assets: &GameAssets, kind: FxKind, pos: Vec3, size: f32, angle: f32) -> Entity {
+    let e = spawn_fx(commands, assets, kind, pos, size, Vec3::ZERO);
+    commands.entity(e).entry::<Transform>().and_modify(move |mut t| t.rotation = yaw(angle));
+    e
+}
+
+fn update_fx(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &mut Transform, &mut Fx)>) {
+    let dt = time.delta_secs();
+    for (e, mut tf, mut fx) in &mut q {
+        fx.life -= dt;
+        if fx.life <= 0.0 {
+            commands.entity(e).despawn();
+            continue;
+        }
+        let age = 1.0 - fx.life / fx.max;
+        let s = fx.size;
+        match fx.kind {
+            FxKind::Fireball => {
+                let k = if age < 0.35 { 0.4 + age / 0.35 * 0.6 } else { 1.0 - (age - 0.35) / 0.65 };
+                tf.scale = Vec3::splat(s * k.max(0.01));
+            }
+            FxKind::Smoke | FxKind::DarkSmoke => {
+                tf.translation += fx.vel * dt;
+                fx.vel *= (-1.5 * dt).exp();
+                let k = if age < 0.3 { 0.5 + age / 0.3 * 0.5 } else { 1.0 - (age - 0.3) / 0.7 };
+                tf.scale = Vec3::splat(s * k.max(0.01));
+            }
+            FxKind::Spark => tf.scale = Vec3::splat(s * (1.0 - age).max(0.01)),
+            FxKind::Debris => {
+                fx.vel.y -= 22.0 * dt;
+                tf.translation += fx.vel * dt;
+                if tf.translation.y < 0.1 {
+                    tf.translation.y = 0.1;
+                    fx.vel = Vec3::ZERO;
+                }
+                tf.rotate_x(dt * 8.0);
+                tf.scale = Vec3::splat(s * (1.0 - age * age).max(0.01));
+            }
+            FxKind::Scorch | FxKind::Blood | FxKind::Track | FxKind::Dirt => {
+                // Shrink away during the last quarter of life.
+                let k = ((1.0 - age) / 0.25).min(1.0);
+                let base = if fx.kind == FxKind::Track { Vec3::new(s * 2.0, 0.02, s) } else { Vec3::new(s, 0.02, s) };
+                tf.scale = Vec3::new(base.x * k.max(0.01), base.y, base.z * k.max(0.01));
+            }
+            FxKind::Telegraph { .. } => {
+                let k = 0.2 + age * 0.8;
+                tf.scale = Vec3::new(s * k, 0.6, s * k);
+            }
+        }
     }
 }

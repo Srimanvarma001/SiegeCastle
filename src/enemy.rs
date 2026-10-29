@@ -1,37 +1,37 @@
-//! Enemy types, spawning, swarm movement and boss attacks.
+//! Enemy troops (marching in formations) and the five bosses.
 
-use crate::assets::{GameAssets, shape};
-use crate::castle::Castle;
-use crate::combat::EnemyShot;
+use crate::art::{p2, w3, yaw};
+use crate::assets::GameAssets;
+use crate::combat::{Bullet, Payload, spawn_arc, spawn_fx, FxKind};
+use crate::director::Director;
 use crate::grid::Grid;
-use crate::{GameEntity, MAP_HALF, Sim};
+use crate::items::{Loadout, ModuleKind, Stats, level_mult};
+use crate::player::Castle;
+use crate::{GameEntity, GameRng, MAP_HALF, Shake, Sim};
 use bevy::prelude::*;
-
-pub const Z_ENEMY: f32 = 3.0;
+use rand::Rng;
 
 pub struct EnemyPlugin;
 
 impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(crate::GameState::Starting), spawn_boss_pointer)
+        app.add_systems(OnEnter(crate::GameState::Starting), spawn_pointer)
             .add_systems(Update, boss_pointer.in_set(Sim::Resolve))
-            .add_systems(Update, enemy_move.in_set(Sim::Move))
-            .add_systems(Update, boss_shoot.in_set(Sim::Combat))
-            .add_systems(Update, boss_bars.in_set(Sim::Resolve));
+            .add_systems(Update, (enemy_move, boss_ai).in_set(Sim::Move))
+            .add_systems(Update, archer_fire.in_set(Sim::Combat));
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum EnemyKind {
-    /// Fast and weak. The bulk of every swarm.
-    Raider,
-    /// Armored footman. Slower, takes more hits.
+    Footman,
+    Archer,
     Knight,
-    /// Battering ram. Slow, tanky, hits the walls hard.
-    Ram,
-    /// A rival castle on wheels. Mini-boss that fires back.
-    RivalCastle,
-    /// The final boss: the Warlord's citadel.
+    Cart,
+    SiegeTower,
+    WarWagon,
+    Juggernaut,
+    Trebuchet,
     Warlord,
 }
 
@@ -39,26 +39,67 @@ pub struct EnemyStats {
     pub hp: f32,
     pub speed: f32,
     pub radius: f32,
-    /// Damage per second while touching the castle.
+    /// Damage per second while pressed against the castle.
     pub dps: f32,
-    pub xp: u32,
+    /// Coins dropped.
+    pub coins: u32,
 }
 
 impl EnemyKind {
+    pub const ALL: [EnemyKind; 9] = [
+        EnemyKind::Footman,
+        EnemyKind::Archer,
+        EnemyKind::Knight,
+        EnemyKind::Cart,
+        EnemyKind::SiegeTower,
+        EnemyKind::WarWagon,
+        EnemyKind::Juggernaut,
+        EnemyKind::Trebuchet,
+        EnemyKind::Warlord,
+    ];
+
     pub fn stats(self) -> EnemyStats {
-        let (hp, speed, radius, dps, xp) = match self {
-            EnemyKind::Raider => (22.0, 150.0, 10.0, 4.0, 1),
-            EnemyKind::Knight => (70.0, 105.0, 14.0, 8.0, 3),
-            EnemyKind::Ram => (260.0, 75.0, 20.0, 20.0, 10),
-            EnemyKind::RivalCastle => (3000.0, 62.0, 55.0, 40.0, 80),
-            EnemyKind::Warlord => (6000.0, 52.0, 85.0, 70.0, 0),
+        let (hp, speed, radius, dps, coins) = match self {
+            EnemyKind::Footman => (12.0, 5.0, 0.55, 4.0, 1),
+            EnemyKind::Archer => (9.0, 5.2, 0.55, 3.0, 1),
+            EnemyKind::Knight => (45.0, 9.5, 0.9, 8.0, 3),
+            EnemyKind::Cart => (140.0, 6.5, 1.6, 14.0, 6),
+            EnemyKind::SiegeTower => (700.0, 3.2, 3.2, 20.0, 40),
+            EnemyKind::WarWagon => (420.0, 6.0, 2.6, 15.0, 30),
+            EnemyKind::Juggernaut => (1300.0, 4.0, 4.6, 30.0, 60),
+            EnemyKind::Trebuchet => (1500.0, 3.0, 4.6, 20.0, 70),
+            EnemyKind::Warlord => (3600.0, 3.4, 8.5, 45.0, 150),
         };
-        EnemyStats { hp, speed, radius, dps, xp }
+        EnemyStats { hp, speed, radius, dps, coins }
     }
 
     pub fn is_boss(self) -> bool {
-        matches!(self, EnemyKind::RivalCastle | EnemyKind::Warlord)
+        matches!(
+            self,
+            EnemyKind::SiegeTower | EnemyKind::WarWagon | EnemyKind::Juggernaut | EnemyKind::Trebuchet | EnemyKind::Warlord
+        )
     }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            EnemyKind::Footman => "Footman",
+            EnemyKind::Archer => "Archer",
+            EnemyKind::Knight => "Knight",
+            EnemyKind::Cart => "War Cart",
+            EnemyKind::SiegeTower => "The Siege Tower",
+            EnemyKind::WarWagon => "War Wagon",
+            EnemyKind::Juggernaut => "Iron Juggernaut",
+            EnemyKind::Trebuchet => "Trebuchet Fortress",
+            EnemyKind::Warlord => "The Warlord's Citadel",
+        }
+    }
+}
+
+/// Multipliers that grow over the run.
+#[derive(Clone, Copy, Debug)]
+pub struct Strength {
+    pub hp: f32,
+    pub dmg: f32,
 }
 
 #[derive(Component)]
@@ -69,24 +110,41 @@ pub struct Enemy {
     pub speed: f32,
     pub radius: f32,
     pub dps: f32,
-    pub xp: u32,
-    /// True while pressed against the castle walls.
+    pub coins: u32,
+    pub dmg_mult: f32,
     pub touching: bool,
-    /// Seconds left of the white "got hit" flash.
     pub flash: f32,
     flashing: bool,
-    base_mat: Handle<ColorMaterial>,
+    /// Current movement, used to aim shots ahead of it.
+    pub vel: Vec2,
+    /// Push from rams and explosions. Fades quickly.
+    pub knock: Vec2,
+    /// Place in its marching formation, relative to the target.
+    pub slot: Vec2,
+    pub attack: f32,
+}
+
+impl Enemy {
+    pub fn hit(&mut self, dmg: f32) {
+        self.hp -= dmg;
+        self.flash = 0.09;
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum BossState {
+    Approach,
+    Windup,
+    Charging,
 }
 
 #[derive(Component)]
 pub struct Boss {
-    pub shoot_timer: f32,
-}
-
-/// Red health bar fill above a boss.
-#[derive(Component)]
-pub struct BossBarFill {
-    width: f32,
+    pub state: BossState,
+    pub timer: f32,
+    pub timer2: f32,
+    pub dir: Vec2,
+    pub telegraph: Option<Entity>,
 }
 
 pub fn spawn_enemy(
@@ -94,281 +152,441 @@ pub fn spawn_enemy(
     assets: &GameAssets,
     kind: EnemyKind,
     pos: Vec2,
-    wave: u32,
-) {
-    let s = kind.stats();
-    let w = wave.saturating_sub(1) as f32;
-    // Boss health is tuned by hand, so only regular enemies scale with the wave.
-    let hp = if kind.is_boss() { s.hp } else { s.hp * (1.0 + 0.15 * w) };
-    let speed = s.speed * (1.0 + 0.02 * w);
-    let m = &assets.m;
-    let base_mat = match kind {
-        EnemyKind::Raider => m.raider.clone(),
-        EnemyKind::Knight => m.knight.clone(),
-        EnemyKind::Ram => m.ram.clone(),
-        EnemyKind::RivalCastle => m.boss.clone(),
-        EnemyKind::Warlord => m.warlord.clone(),
-    };
-    let enemy = Enemy {
-        kind,
-        hp,
-        max_hp: hp,
-        speed,
-        radius: s.radius,
-        dps: s.dps * (1.0 + 0.05 * w),
-        xp: s.xp,
-        touching: false,
-        flash: 0.0,
-        flashing: false,
-        base_mat: base_mat.clone(),
-    };
-    let pos3 = pos.extend(Z_ENEMY);
+    heading: f32,
+    slot: Vec2,
+    s: Strength,
+) -> Entity {
+    let st = kind.stats();
+    let hp = st.hp * s.hp;
+    let mut e = commands.spawn((
+        GameEntity,
+        Enemy {
+            kind,
+            hp,
+            max_hp: hp,
+            speed: st.speed,
+            radius: st.radius,
+            dps: st.dps,
+            coins: st.coins,
+            dmg_mult: s.dmg,
+            touching: false,
+            flash: 0.0,
+            flashing: false,
+            vel: Vec2::ZERO,
+            knock: Vec2::ZERO,
+            slot,
+            attack: 1.0 + (pos.x.abs() % 1.5),
+        },
+        Mesh3d(assets.enemies[&kind].clone()),
+        MeshMaterial3d(assets.m.vc.clone()),
+        Transform::from_translation(w3(pos, 0.0)).with_rotation(yaw(heading)),
+    ));
+    if kind.is_boss() {
+        e.insert(Boss { state: BossState::Approach, timer: 3.0, timer2: 2.0, dir: Vec2::X, telegraph: None });
+    }
+    e.id()
+}
 
-    match kind {
-        EnemyKind::Raider => {
-            commands.spawn((
-                GameEntity,
-                enemy,
-                shape(&assets.circle, &base_mat, pos3, Vec2::splat(s.radius * 2.0)),
-            ));
-        }
-        EnemyKind::Knight => {
-            commands
-                .spawn((
-                    GameEntity,
-                    enemy,
-                    shape(&assets.square, &base_mat, pos3, Vec2::splat(s.radius * 1.8)),
-                ))
-                .with_child(shape(
-                    &assets.square,
-                    &m.knight_trim,
-                    Vec3::new(0.25, 0.0, 0.1),
-                    Vec2::new(0.3, 0.7),
-                ));
-        }
-        EnemyKind::Ram => {
-            commands
-                .spawn((
-                    GameEntity,
-                    enemy,
-                    shape(&assets.square, &base_mat, pos3, Vec2::new(46.0, 26.0)),
-                ))
-                .with_child(shape(
-                    &assets.square,
-                    &m.cannon,
-                    Vec3::new(0.55, 0.0, 0.1),
-                    Vec2::new(0.25, 0.4),
-                ));
-        }
-        EnemyKind::RivalCastle | EnemyKind::Warlord => {
-            let r = s.radius;
-            let (roof, tower) = if kind == EnemyKind::Warlord {
-                (&m.roof_red, &m.boss)
-            } else {
-                (&m.boss_roof, &m.warlord)
-            };
-            let bar_w = r * 2.2;
-            commands
-                .spawn((
-                    GameEntity,
-                    enemy,
-                    Boss { shoot_timer: 2.0 },
-                    Transform::from_translation(pos3),
-                    Visibility::Visible,
-                ))
-                .with_children(|p| {
-                    p.spawn(shape(&assets.square, &base_mat, Vec3::ZERO, Vec2::splat(r * 1.7)));
-                    p.spawn(shape(&assets.square, roof, Vec3::Z * 0.2, Vec2::splat(r * 0.8)));
-                    for (x, y) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-                        p.spawn(shape(
-                            &assets.circle,
-                            tower,
-                            Vec3::new(x * r * 0.85, y * r * 0.85, 0.3),
-                            Vec2::splat(r * 0.6),
-                        ));
-                    }
-                    p.spawn(shape(
-                        &assets.square,
-                        &m.bar_bg,
-                        Vec3::new(0.0, r * 1.25, 0.5),
-                        Vec2::new(bar_w + 4.0, 10.0),
-                    ));
-                    p.spawn((
-                        BossBarFill { width: bar_w },
-                        shape(
-                            &assets.square,
-                            &m.bar_fill,
-                            Vec3::new(0.0, r * 1.25, 0.6),
-                            Vec2::new(bar_w, 6.0),
-                        ),
-                    ));
-                });
-        }
+/// What enemies need to know about the castle this frame.
+#[derive(Clone, Copy)]
+struct CastleInfo {
+    pos: Vec2,
+    vel: Vec2,
+    radius: f32,
+    speed: f32,
+    heading: Vec2,
+    ram_hit: f32,
+    knock: f32,
+}
+
+fn castle_info(tf: &Transform, c: &Castle, stats: &Stats, loadout: &Loadout) -> CastleInfo {
+    let speed = c.speed.max(0.0);
+    let ram = loadout.module(ModuleKind::Ram);
+    let base = match ram {
+        Some(m) => ModuleKind::Ram.damage() * level_mult(m.level),
+        None => 5.0,
+    };
+    let charge = if c.charge > 0.0 { 3.0 } else { 1.0 };
+    CastleInfo {
+        pos: p2(tf.translation),
+        vel: c.vel,
+        radius: stats.radius,
+        speed,
+        heading: Vec2::from_angle(c.heading),
+        ram_hit: base * stats.damage * (speed / 12.0) * charge,
+        knock: (4.0 + speed * 0.9) * (0.7 + 0.3 * stats.mass.min(4.0)) * if ram.is_some() { 1.4 } else { 1.0 },
     }
 }
 
-/// Every enemy walks toward the castle and pushes away from its neighbours.
-/// Runs in parallel across all CPU cores.
+/// Troops march toward the castle in formation, then swarm it.
+/// Runs in parallel on all CPU cores.
 fn enemy_move(
     time: Res<Time>,
     grid: Res<Grid>,
     assets: Res<GameAssets>,
+    stats: Res<Stats>,
+    loadout: Res<Loadout>,
     castle: Query<(&Transform, &Castle), Without<Enemy>>,
-    mut enemies: Query<(
-        Entity,
-        &mut Transform,
-        &mut Enemy,
-        Option<&mut MeshMaterial2d<ColorMaterial>>,
-    )>,
+    mut enemies: Query<(Entity, &mut Transform, &mut Enemy, &mut MeshMaterial3d<StandardMaterial>), Without<Boss>>,
 ) {
     let Ok((ctf, c)) = castle.single() else {
         return;
     };
-    let cpos = ctf.translation.truncate();
-    let crad = c.radius;
+    let ci = castle_info(ctf, c, &stats, &loadout);
     let dt = time.delta_secs();
-    let flash_mat = &assets.m.flash;
+    let (flash_mat, base_mat) = (&assets.m.flash, &assets.m.vc);
+    let knock_decay = (-5.0 * dt).exp();
 
-    enemies
-        .par_iter_mut()
-        .for_each(|(entity, mut tf, mut en, mat)| {
-            let pos = tf.translation.truncate();
-            let to = cpos - pos;
-            let dist = to.length().max(0.001);
-            let dir = to / dist;
+    enemies.par_iter_mut().for_each(|(entity, mut tf, mut en, mut mat)| {
+        let pos = p2(tf.translation);
+        let to = ci.pos - pos;
+        let dist = to.length().max(0.001);
 
-            // Push apart from overlapping neighbours. Heavy enemies barely move.
-            let mut push = Vec2::ZERO;
-            grid.for_each_near(pos, en.radius + 30.0, |o| {
-                // Bosses plow through their own army instead of getting stuck in it.
-                if o.entity == entity || (en.kind.is_boss() && o.radius < 50.0) {
-                    return;
-                }
-                let d = pos - o.pos;
-                let min = en.radius + o.radius;
-                let l2 = d.length_squared();
-                if l2 < min * min && l2 > 0.0001 {
-                    let l = l2.sqrt();
-                    let weight = o.radius / (en.radius + o.radius);
-                    push += d / l * (min - l) * weight;
-                }
-            });
-            let push = push.clamp_length_max(en.speed * dt * 1.5 + 4.0);
-
-            let mut next = pos + dir * en.speed * dt + push;
-            let contact = crad + en.radius;
-            en.touching = false;
-            let from_castle = next - cpos;
-            if from_castle.length_squared() < contact * contact {
-                next = cpos + from_castle.normalize_or(-dir) * contact;
-                en.touching = true;
+        // Keep formation while far away, swarm when close.
+        let keep = ((dist - 14.0) / 26.0).clamp(0.0, 1.0);
+        let target = ci.pos + en.slot * keep;
+        let mut dir = (target - pos).normalize_or(to / dist);
+        if en.kind == EnemyKind::Archer {
+            if dist < 13.0 {
+                dir = -to / dist;
+            } else if dist < 19.0 {
+                dir = Vec2::ZERO;
             }
-            next = next.clamp(Vec2::splat(-MAP_HALF), Vec2::splat(MAP_HALF));
-            tf.translation.x = next.x;
-            tf.translation.y = next.y;
+        }
+        en.vel = dir * en.speed;
 
-            if !en.kind.is_boss() {
-                tf.rotation = Quat::from_rotation_z(dir.y.atan2(dir.x));
+        let mut push = Vec2::ZERO;
+        grid.for_each_near(pos, en.radius + 2.0, |o| {
+            if o.entity == entity {
+                return;
             }
-
-            // White hit flash: only touch the material when it changes.
-            en.flash = (en.flash - dt).max(0.0);
-            let want = en.flash > 0.0;
-            if want != en.flashing {
-                en.flashing = want;
-                if let Some(mut m) = mat {
-                    m.0 = if want { flash_mat.clone() } else { en.base_mat.clone() };
-                }
+            let d = pos - o.pos;
+            let min = en.radius + o.radius;
+            let l2 = d.length_squared();
+            if l2 < min * min && l2 > 0.0001 {
+                let l = l2.sqrt();
+                push += d / l * (min - l) * (o.radius / (en.radius + o.radius));
             }
         });
+        let push = push.clamp_length_max(en.speed * dt * 1.5 + 0.08);
+
+        let mut next = pos + en.vel * dt + en.knock * dt + push;
+        en.knock *= knock_decay;
+
+        let contact = ci.radius + en.radius;
+        let from = next - ci.pos;
+        let was_touching = en.touching;
+        en.touching = false;
+        if from.length_squared() < contact * contact {
+            let away = from.normalize_or(-to / dist);
+            next = ci.pos + away * contact;
+            en.touching = true;
+            // Ram hit when the castle drives into it.
+            let front = away.dot(ci.heading);
+            if !was_touching && ci.speed > 3.0 && front > 0.0 {
+                en.hp -= ci.ram_hit * (0.5 + front);
+                en.flash = 0.09;
+                en.knock = (away * 0.7 + ci.heading * 0.6).normalize_or(away) * ci.knock + ci.vel * 0.3;
+            }
+        }
+        let lim = MAP_HALF - 2.0;
+        next = next.clamp(Vec2::splat(-lim), Vec2::splat(lim));
+        tf.translation = w3(next, 0.0);
+        let face = if en.vel.length_squared() > 0.01 { en.vel } else { to };
+        tf.rotation = yaw(face.to_angle());
+
+        en.flash = (en.flash - dt).max(0.0);
+        let want = en.flash > 0.0;
+        if want != en.flashing {
+            en.flashing = want;
+            mat.0 = if want { flash_mat.clone() } else { base_mat.clone() };
+        }
+    });
 }
 
-fn boss_shoot(
+fn archer_fire(
     mut commands: Commands,
     time: Res<Time>,
     assets: Res<GameAssets>,
-    castle: Query<&Transform, With<Castle>>,
-    mut bosses: Query<(&Transform, &Enemy, &mut Boss)>,
+    castle: Query<(&Transform, &Castle), Without<Enemy>>,
+    mut archers: Query<(&Transform, &mut Enemy), Without<Boss>>,
 ) {
-    let Ok(ctf) = castle.single() else {
+    let Ok((ctf, c)) = castle.single() else {
         return;
     };
-    let cpos = ctf.translation.truncate();
-    for (tf, enemy, mut boss) in &mut bosses {
-        boss.shoot_timer -= time.delta_secs();
-        let pos = tf.translation.truncate();
-        if boss.shoot_timer > 0.0 || pos.distance(cpos) > 900.0 {
+    let cpos = p2(ctf.translation);
+    let dt = time.delta_secs();
+    for (tf, mut en) in &mut archers {
+        if en.kind != EnemyKind::Archer {
             continue;
         }
-        let final_boss = enemy.kind == EnemyKind::Warlord;
-        boss.shoot_timer = if final_boss { 1.2 } else { 1.8 };
-        let shots = if final_boss { 5 } else { 3 };
-        let dmg = if final_boss { 30.0 } else { 22.0 };
-        let base = (cpos - pos).to_angle();
-        for i in 0..shots {
-            let a = base + (i as f32 - (shots - 1) as f32 / 2.0) * 0.18;
-            let vel = Vec2::from_angle(a) * 420.0;
-            commands.spawn((
-                GameEntity,
-                EnemyShot { vel, damage: dmg, life: 3.0 },
-                shape(
-                    &assets.circle,
-                    &assets.m.enemy_shot,
-                    (pos + vel.normalize() * enemy.radius).extend(6.0),
-                    Vec2::splat(16.0),
-                ),
-            ));
+        en.attack -= dt;
+        let pos = p2(tf.translation);
+        if en.attack > 0.0 || pos.distance(cpos) > 21.0 {
+            continue;
+        }
+        en.attack = 2.8;
+        let dur = 1.1;
+        let to = cpos + c.vel * dur;
+        spawn_arc(&mut commands, &assets, w3(pos, 1.3), to, dur, 4.0, Payload::EnemyArrow { dmg: 3.0 * en.dmg_mult });
+    }
+}
+
+/// Each boss has its own way of fighting.
+fn boss_ai(
+    mut commands: Commands,
+    time: Res<Time>,
+    assets: Res<GameAssets>,
+    director: Res<Director>,
+    mut rng: ResMut<GameRng>,
+    mut shake: ResMut<Shake>,
+    stats: Res<Stats>,
+    loadout: Res<Loadout>,
+    mut castle: Query<(&Transform, &mut Castle), Without<Enemy>>,
+    mut bosses: Query<(&mut Transform, &mut Enemy, &mut Boss, &mut MeshMaterial3d<StandardMaterial>)>,
+) {
+    let Ok((ctf, mut c)) = castle.single_mut() else {
+        return;
+    };
+    let cpos = p2(ctf.translation);
+    let dt = time.delta_secs();
+    let crad = c.radius;
+    let ci = castle_info(ctf, &c, &stats, &loadout);
+
+    for (mut tf, mut en, mut boss, mut mat) in &mut bosses {
+        let pos = p2(tf.translation);
+        let to = cpos - pos;
+        let dist = to.length().max(0.01);
+        let dir = to / dist;
+        boss.timer -= dt;
+        boss.timer2 -= dt;
+        en.attack -= dt;
+        let mut vel = dir * en.speed;
+        let mut face = dir;
+
+        match en.kind {
+            EnemyKind::SiegeTower => {
+                // Unloads a squad of footmen every few seconds.
+                if boss.timer <= 0.0 && dist < 60.0 {
+                    boss.timer = 7.0;
+                    for i in 0..8 {
+                        let off = Vec2::new((i % 4) as f32 * 1.3 - 2.0, (i / 4) as f32 * 1.3 - 0.6);
+                        let p = pos + dir * (en.radius + 2.0) + off;
+                        spawn_enemy(&mut commands, &assets, EnemyKind::Footman, p, dir.to_angle(), Vec2::ZERO, director.strength);
+                    }
+                    spawn_fx(&mut commands, &assets, FxKind::Smoke, w3(pos + dir * en.radius, 1.5), 2.0, Vec3::Y);
+                }
+            }
+            EnemyKind::WarWagon => {
+                // Keeps its distance and fires its cannon.
+                let tangent = Vec2::new(-dir.y, dir.x);
+                vel = if dist > 24.0 {
+                    dir * en.speed
+                } else if dist < 15.0 {
+                    -dir * en.speed
+                } else {
+                    tangent * en.speed * 0.8
+                };
+                if boss.timer <= 0.0 && dist < 34.0 {
+                    boss.timer = 2.2;
+                    let lead = cpos + c.vel * (dist / 26.0);
+                    let aim = (lead - pos).normalize_or(dir);
+                    let muzzle = pos + aim * (en.radius + 1.0);
+                    fire_ball(&mut commands, &assets, muzzle, aim * 26.0, 10.0 * en.dmg_mult);
+                }
+            }
+            EnemyKind::Juggernaut => charge_ai(&mut commands, &assets, &mut boss, &mut en, pos, dir, dist, 34.0, 30.0, &mut vel, &mut face),
+            EnemyKind::Trebuchet => {
+                // Stays far back and lobs boulders where the castle is going.
+                vel = if dist > 46.0 {
+                    dir * en.speed
+                } else if dist < 30.0 {
+                    -dir * en.speed
+                } else {
+                    Vec2::ZERO
+                };
+                if boss.timer <= 0.0 && dist < 60.0 {
+                    boss.timer = 4.0;
+                    for _ in 0..3 {
+                        let dur = 2.0;
+                        let off = Vec2::new(rng.0.random_range(-6.0..6.0), rng.0.random_range(-6.0..6.0));
+                        let to = cpos + c.vel * dur + off;
+                        spawn_arc(&mut commands, &assets, w3(pos, 8.0), to, dur, 16.0,
+                            Payload::Boulder { dmg: 22.0 * en.dmg_mult, radius: 4.0 });
+                        spawn_fx(&mut commands, &assets, FxKind::Telegraph { dur }, w3(to, 0.12), 8.0, Vec3::ZERO);
+                    }
+                }
+            }
+            EnemyKind::Warlord => {
+                if boss.timer2 <= 0.0 && dist < 45.0 {
+                    boss.timer2 = 3.0;
+                    for i in -2..=2 {
+                        let aim = Vec2::from_angle(dir.to_angle() + i as f32 * 0.16);
+                        fire_ball(&mut commands, &assets, pos + aim * (en.radius + 1.0), aim * 24.0, 14.0 * en.dmg_mult);
+                    }
+                }
+                if boss.state == BossState::Approach && boss.timer <= 0.0 && dist < 60.0 && rng.0.random::<f32>() < 0.4 {
+                    boss.timer = 12.0;
+                    for i in 0..5 {
+                        let p = pos - dir * (en.radius + 2.0) + Vec2::new(0.0, i as f32 * 2.0 - 4.0);
+                        spawn_enemy(&mut commands, &assets, EnemyKind::Knight, p, dir.to_angle(), Vec2::ZERO, director.strength);
+                    }
+                } else {
+                    charge_ai(&mut commands, &assets, &mut boss, &mut en, pos, dir, dist, 40.0, 16.0, &mut vel, &mut face);
+                }
+            }
+            _ => {}
+        }
+
+        // Move, but never drive into the castle.
+        let mut next = pos + vel * dt + en.knock * dt;
+        en.knock *= (-3.0 * dt).exp();
+        let contact = crad + en.radius;
+        let from = next - cpos;
+        en.touching = false;
+        if from.length_squared() < contact * contact {
+            let away = from.normalize_or(-dir);
+            next = cpos + away * contact;
+            en.touching = true;
+            // Ramming hurts bosses too, at most twice a second.
+            if ci.speed > 3.0 && away.dot(ci.heading) > 0.0 && en.attack <= 0.0 {
+                en.hit(ci.ram_hit * 2.0);
+                en.attack = 0.5;
+                shake.0 += 0.3;
+            }
+            if boss.state == BossState::Charging {
+                c.hurt(30.0 * en.dmg_mult);
+                c.knock += boss.dir * 18.0;
+                shake.0 += 1.2;
+                boss.state = BossState::Approach;
+                boss.timer = 5.0;
+                if let Some(t) = boss.telegraph.take() {
+                    commands.entity(t).despawn();
+                }
+            }
+        }
+        let lim = MAP_HALF - en.radius;
+        next = next.clamp(Vec2::splat(-lim), Vec2::splat(lim));
+        tf.translation = w3(next, 0.0);
+        if vel.length_squared() > 0.01 || en.kind == EnemyKind::WarWagon {
+            let want = if en.kind == EnemyKind::WarWagon { dir.to_angle() } else { face.to_angle() };
+            let cur = tf.rotation.to_euler(EulerRot::YXZ).0;
+            let diff = (want - cur + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
+            tf.rotation = yaw(cur + diff * (1.0 - (-4.0 * dt).exp()));
+        }
+        en.flash = (en.flash - dt).max(0.0);
+        let want = en.flash > 0.0;
+        if want != en.flashing {
+            en.flashing = want;
+            mat.0 = if want { assets.m.flash.clone() } else { assets.m.vc.clone() };
         }
     }
 }
 
-fn boss_bars(
-    bosses: Query<(&Enemy, &Children), With<Boss>>,
-    mut bars: Query<(&mut Transform, &BossBarFill)>,
+/// Wind up (with a red warning line), then charge in a straight line.
+fn charge_ai(
+    commands: &mut Commands,
+    assets: &GameAssets,
+    boss: &mut Boss,
+    en: &mut Enemy,
+    pos: Vec2,
+    dir: Vec2,
+    dist: f32,
+    trigger: f32,
+    charge_speed: f32,
+    vel: &mut Vec2,
+    face: &mut Vec2,
 ) {
-    for (enemy, children) in &bosses {
-        let frac = (enemy.hp / enemy.max_hp).clamp(0.0, 1.0);
-        for child in children.iter() {
-            if let Ok((mut tf, bar)) = bars.get_mut(child) {
-                tf.scale.x = bar.width * frac;
-                tf.translation.x = -bar.width * (1.0 - frac) / 2.0;
+    match boss.state {
+        BossState::Approach => {
+            if boss.timer <= 0.0 && dist < trigger {
+                boss.state = BossState::Windup;
+                boss.timer = 1.3;
+                boss.dir = dir;
+                let len = trigger + 12.0;
+                let mid = pos + dir * (len / 2.0);
+                let t = commands
+                    .spawn((
+                        GameEntity,
+                        Mesh3d(assets.cube.clone()),
+                        MeshMaterial3d(assets.m.telegraph.clone()),
+                        Transform::from_translation(w3(mid, 0.1))
+                            .with_rotation(yaw(dir.to_angle()))
+                            .with_scale(Vec3::new(len, 0.05, en.radius * 1.2)),
+                        bevy::light::NotShadowCaster,
+                    ))
+                    .id();
+                boss.telegraph = Some(t);
+            }
+        }
+        BossState::Windup => {
+            *vel = Vec2::ZERO;
+            *face = boss.dir;
+            if boss.timer <= 0.0 {
+                boss.state = BossState::Charging;
+                boss.timer = 1.6;
+            }
+        }
+        BossState::Charging => {
+            *vel = boss.dir * charge_speed;
+            *face = boss.dir;
+            if boss.timer <= 0.0 {
+                boss.state = BossState::Approach;
+                boss.timer = 5.0;
+                if let Some(t) = boss.telegraph.take() {
+                    commands.entity(t).despawn();
+                }
             }
         }
     }
 }
 
-/// Red arrow at the edge of the castle pointing to the nearest boss.
+fn fire_ball(commands: &mut Commands, assets: &GameAssets, from: Vec2, vel: Vec2, dmg: f32) {
+    commands.spawn((
+        GameEntity,
+        Bullet::hostile(vel, dmg, 0.5, 3.0),
+        Mesh3d(assets.ball.clone()),
+        MeshMaterial3d(assets.m.cannonball.clone()),
+        Transform::from_translation(w3(from, 1.8)).with_scale(Vec3::splat(1.0)),
+    ));
+    spawn_fx(commands, assets, FxKind::Smoke, w3(from, 2.0), 1.4, Vec3::new(0.0, 1.0, 0.0));
+}
+
+/// Red arrow next to the castle pointing at the nearest boss.
 #[derive(Component)]
 struct BossPointer;
 
-fn spawn_boss_pointer(mut commands: Commands, assets: Res<GameAssets>) {
+fn spawn_pointer(mut commands: Commands, assets: Res<GameAssets>) {
     commands.spawn((
         GameEntity,
         BossPointer,
+        Mesh3d(assets.pointer.clone()),
+        MeshMaterial3d(assets.m.telegraph.clone()),
+        Transform::default(),
         Visibility::Hidden,
-        shape(&assets.diamond, &assets.m.bar_fill, Vec3::new(0.0, 0.0, 8.0), Vec2::new(34.0, 16.0)),
+        bevy::light::NotShadowCaster,
     ));
 }
 
 fn boss_pointer(
-    castle: Query<(&Transform, &Castle), Without<BossPointer>>,
+    time: Res<Time>,
+    castle: Query<(&Transform, &Castle), (Without<BossPointer>, Without<Boss>)>,
     bosses: Query<&Transform, (With<Boss>, Without<BossPointer>)>,
     mut pointer: Query<(&mut Transform, &mut Visibility), With<BossPointer>>,
 ) {
     let (Ok((ctf, c)), Ok((mut tf, mut vis))) = (castle.single(), pointer.single_mut()) else {
         return;
     };
-    let cpos = ctf.translation.truncate();
+    let cpos = p2(ctf.translation);
     let nearest = bosses
         .iter()
-        .map(|t| t.translation.truncate())
+        .map(|t| p2(t.translation))
         .min_by(|a, b| a.distance_squared(cpos).total_cmp(&b.distance_squared(cpos)));
     match nearest {
-        Some(b) if b.distance(cpos) > c.radius + 500.0 => {
+        Some(b) if b.distance(cpos) > c.radius + 30.0 => {
             let dir = (b - cpos).normalize_or(Vec2::X);
-            let p = cpos + dir * (c.radius + 45.0);
-            tf.translation = p.extend(8.0);
-            tf.rotation = Quat::from_rotation_z(dir.to_angle());
+            let bob = (time.elapsed_secs() * 6.0).sin() * 0.4;
+            *tf = Transform::from_translation(w3(cpos + dir * (c.radius + 4.0 + bob), 1.0)).with_rotation(yaw(dir.to_angle()));
             *vis = Visibility::Visible;
         }
         _ => *vis = Visibility::Hidden,

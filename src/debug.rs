@@ -1,23 +1,32 @@
 //! Testing helpers, all off by default. Turn them on with environment variables:
 //!
-//! - `SIEGE_AUTOPILOT=1`       castle drives itself in a big loop and fires barrages
-//! - `SIEGE_SHOTS=5,60,120`    save screenshots at these run times (seconds)
-//! - `SIEGE_SHOT_DIR=path`     where screenshots go (default: `screenshots`)
-//! - `SIEGE_EXIT_AFTER=180`    quit after this many seconds of play
-//! - `SIEGE_SPEED=3`           run the game clock faster
-//! - `SIEGE_LOG=1`             print a status line every 5 seconds
-//! - `SIEGE_START_WAVE=10`    jump straight to a wave (castle starts fully grown)
-//! - `SIEGE_GOD=1`             castle cannot be destroyed
+//! - `SIEGE_AUTOPILOT=1`     castle drives itself, uses abilities, picks cards
+//! - `SIEGE_SHOTS=5,60,120`  save screenshots at these run times (seconds)
+//! - `SIEGE_SHOT_CHOICE=1`   also save one screenshot of the first card screen
+//! - `SIEGE_SHOT_DIR=path`   where screenshots go (default: `screenshots`)
+//! - `SIEGE_EXIT_AFTER=180`  quit after this many seconds of play
+//! - `SIEGE_SPEED=2`         run the game clock faster
+//! - `SIEGE_LOG=1`           print a status line every 5 seconds
+//! - `SIEGE_START_LEVEL=8`   start with this many levels' worth of XP
+//! - `SIEGE_BOSS_IN=10`      first boss arrives after this many seconds
+//! - `SIEGE_ENDLESS=1`       start directly in endless mode
+//! - `SIEGE_GOD=1`           castle cannot be destroyed
+//! - `SIEGE_GALLERY=1`       spawn all five bosses around the castle at once
 //!
 //! F12 always saves a screenshot.
 
-use crate::castle::Castle;
+use crate::art::p2;
+use crate::director::{Director, BOSSES};
 use crate::enemy::{Boss, Enemy};
-use crate::waves::WaveDirector;
-use crate::{GameState, RunStats};
+use crate::items::{Loadout, Stats};
+use crate::modules::AutoAbilities;
+use crate::player::{Castle, DriveInput};
+use crate::progression::{xp_needed, Progress};
+use crate::{GameRng, GameState, RunStats, Sim};
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
-use bevy::render::view::screenshot::{Screenshot, save_to_disk};
+use bevy::render::view::screenshot::{save_to_disk, Screenshot};
+use rand::Rng;
 
 pub struct DebugPlugin;
 
@@ -28,74 +37,181 @@ impl Plugin for DebugPlugin {
             shots: env("SIEGE_SHOTS")
                 .map(|s| s.split(',').filter_map(|t| t.trim().parse().ok()).collect())
                 .unwrap_or_default(),
+            shot_choice: env("SIEGE_SHOT_CHOICE").is_some(),
             shot_dir: env("SIEGE_SHOT_DIR").unwrap_or_else(|| "screenshots".into()),
             exit_after: env("SIEGE_EXIT_AFTER").and_then(|v| v.parse().ok()),
             speed: env("SIEGE_SPEED").and_then(|v| v.parse().ok()),
             log: env("SIEGE_LOG").is_some(),
+            start_level: env("SIEGE_START_LEVEL").and_then(|v| v.parse().ok()),
+            boss_in: env("SIEGE_BOSS_IN").and_then(|v| v.parse().ok()),
+            endless: env("SIEGE_ENDLESS").is_some(),
+            god: env("SIEGE_GOD").is_some(),
+            gallery: env("SIEGE_GALLERY").is_some(),
             next_log: 0.0,
             manual_shots: 0,
-            start_wave: env("SIEGE_START_WAVE").and_then(|v| v.parse().ok()),
-            god: env("SIEGE_GOD").is_some(),
+            applied: false,
         };
         if env("SIEGE_AUTOPILOT").is_some() {
-            app.insert_resource(Autopilot);
+            app.insert_resource(Autopilot)
+                .insert_resource(AutoPick)
+                .insert_resource(AutoAbilities(true))
+                .add_systems(
+                    Update,
+                    autopilot
+                        .in_set(Sim::Input)
+                        .after(crate::player::read_input)
+                        .before(crate::player::drive),
+                );
         }
         app.insert_resource(cfg)
             .add_systems(Startup, apply_speed)
-            .add_systems(Update, (debug_tick, exit_soon, cheats.run_if(in_state(GameState::Playing))));
+            .add_systems(OnEnter(GameState::Starting), |mut cfg: ResMut<DebugConfig>| cfg.applied = false)
+            .add_systems(Update, (debug_tick, exit_soon, choice_shot.run_if(in_state(GameState::Choosing))))
+            .add_systems(Update, cheats.run_if(in_state(GameState::Playing)));
     }
 }
 
-/// Counts down frames, then quits (gives the final screenshot time to save).
-#[derive(Resource)]
-struct ExitSoon(u32);
-
-/// When present, the castle drives itself.
+/// The castle drives itself.
 #[derive(Resource)]
 pub struct Autopilot;
 
-impl Autopilot {
-    /// Circle the map center (or a boss, if one is out) at a fixed distance, kiting the swarm.
-    pub fn direction(&self, pos: Vec2, boss: Option<Vec2>) -> Vec2 {
-        let (center, radius) = match boss {
-            Some(b) => (b, 420.0),
-            None => (Vec2::ZERO, 1100.0),
-        };
-        let rel = pos - center;
-        let tangent = Vec2::new(-rel.y, rel.x).normalize_or(Vec2::X);
-        let inward = -rel.normalize_or(Vec2::X) * ((rel.length() - radius) / 300.0).clamp(-1.0, 1.0);
-        (tangent + inward).normalize_or(Vec2::X)
-    }
-}
+/// Level-up cards are picked automatically.
+#[derive(Resource)]
+pub struct AutoPick;
 
 #[derive(Resource)]
 struct DebugConfig {
     shots: Vec<f32>,
+    shot_choice: bool,
     shot_dir: String,
     exit_after: Option<f32>,
     speed: Option<f32>,
     log: bool,
+    start_level: Option<u32>,
+    boss_in: Option<f32>,
+    endless: bool,
+    god: bool,
+    gallery: bool,
     next_log: f32,
     manual_shots: u32,
-    start_wave: Option<u32>,
-    god: bool,
+    applied: bool,
 }
+
+#[derive(Resource)]
+struct ExitSoon(u32);
 
 fn apply_speed(cfg: Res<DebugConfig>, mut time: ResMut<Time<Virtual>>) {
     if let Some(s) = cfg.speed {
         time.set_relative_speed(s);
-        // Allow bigger steps so the fast clock is not capped by a slow frame rate.
         time.set_max_delta(std::time::Duration::from_millis(100));
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Circle the map (or the nearest boss), kiting the swarm.
+fn autopilot(
+    mut input: ResMut<DriveInput>,
+    stats: Res<Stats>,
+    mut rng: ResMut<GameRng>,
+    castle: Query<(&Transform, &Castle)>,
+    bosses: Query<&Transform, With<Boss>>,
+    enemies: Query<&Transform, (With<Enemy>, Without<Boss>)>,
+) {
+    let Ok((tf, c)) = castle.single() else {
+        return;
+    };
+    let pos = p2(tf.translation);
+    let (mut sum, mut n) = (Vec2::ZERO, 0.0);
+    for t in &enemies {
+        let p = p2(t.translation);
+        if p.distance(pos) < 35.0 {
+            sum += p;
+            n += 1.0;
+        }
+    }
+    let boss = bosses
+        .iter()
+        .map(|t| p2(t.translation))
+        .min_by(|a, b| a.distance_squared(pos).total_cmp(&b.distance_squared(pos)));
+    let (center, radius) = match boss {
+        Some(b) => (b, 24.0),
+        None if n > 6.0 => (sum / n, 9.0),
+        None => (Vec2::ZERO, 50.0),
+    };
+    let rel = pos - center;
+    let tangent = Vec2::new(-rel.y, rel.x).normalize_or(Vec2::X);
+    let inward = -rel.normalize_or(Vec2::X) * ((rel.length() - radius) / 12.0).clamp(-1.0, 1.0);
+    input.dir = (tangent + inward).normalize_or(Vec2::X);
+    input.nitro = c.hp < stats.max_hp * 0.4 || rng.0.random::<f32>() < 0.02;
+}
+
+fn cheats(
+    mut commands: Commands,
+    assets: Res<crate::assets::GameAssets>,
+    mut cfg: ResMut<DebugConfig>,
+    mut progress: ResMut<Progress>,
+    mut director: ResMut<Director>,
+    stats: Res<Stats>,
+    mut castle: Query<&mut Castle>,
+    positions: Query<&Transform, With<Castle>>,
+) {
+    if !cfg.applied {
+        cfg.applied = true;
+        if cfg.gallery {
+            let c = positions.single().map(|t| p2(t.translation)).unwrap_or_default();
+            for (i, kind) in BOSSES.iter().enumerate() {
+                let p = c + Vec2::from_angle(i as f32 / 5.0 * std::f32::consts::TAU + 0.3) * 30.0;
+                crate::enemy::spawn_enemy(&mut commands, &assets, *kind, p, (c - p).to_angle(), Vec2::ZERO, director.strength);
+            }
+            director.boss_index = BOSSES.len();
+            director.boss_timer = f32::INFINITY;
+        }
+        if let Some(lvl) = cfg.start_level {
+            let total: f32 = (1..lvl).map(xp_needed).sum();
+            progress.add_xp(total);
+        }
+        if let Some(s) = cfg.boss_in {
+            director.boss_timer = s;
+        }
+        if cfg.endless {
+            director.endless = true;
+            director.boss_index = BOSSES.len();
+            director.boss_timer = 60.0;
+        }
+    }
+    if cfg.god
+        && let Ok(mut c) = castle.single_mut()
+    {
+        c.hp = stats.max_hp;
+    }
+}
+
+fn take_shot(commands: &mut Commands, dir: &str, name: &str) {
+    let _ = std::fs::create_dir_all(dir);
+    let path = format!("{dir}/{name}.png");
+    info!("screenshot -> {path}");
+    commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
+}
+
+fn choice_shot(mut commands: Commands, mut cfg: ResMut<DebugConfig>, mut frames: Local<u32>) {
+    if !cfg.shot_choice {
+        return;
+    }
+    *frames += 1;
+    if *frames > 2 {
+        cfg.shot_choice = false;
+        let dir = cfg.shot_dir.clone();
+        take_shot(&mut commands, &dir, "choice");
+    }
+}
+
 fn debug_tick(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     stats: Res<RunStats>,
     state: Res<State<GameState>>,
-    waves: Res<WaveDirector>,
+    progress: Res<Progress>,
+    loadout: Res<Loadout>,
+    director: Res<Director>,
     diagnostics: Res<DiagnosticsStore>,
     castle: Query<(&Transform, &Castle)>,
     enemies: Query<(), With<Enemy>>,
@@ -103,62 +219,55 @@ fn debug_tick(
     mut cfg: ResMut<DebugConfig>,
 ) {
     let t = stats.time;
-    let mut take = |name: String, dir: &str| {
-        let _ = std::fs::create_dir_all(dir);
-        let path = format!("{dir}/{name}.png");
-        info!("screenshot -> {path}");
-        commands.spawn(Screenshot::primary_window()).observe(save_to_disk(path));
-    };
-
     if keys.just_pressed(KeyCode::F12) {
         cfg.manual_shots += 1;
-        take(format!("shot_{:03}", cfg.manual_shots), &cfg.shot_dir.clone());
+        let (dir, n) = (cfg.shot_dir.clone(), cfg.manual_shots);
+        take_shot(&mut commands, &dir, &format!("shot_{n:03}"));
     }
     if let Some(&next) = cfg.shots.first()
         && t >= next
+        && *state.get() == GameState::Playing
     {
         cfg.shots.remove(0);
         let dir = cfg.shot_dir.clone();
-        take(format!("t{:04}", next as u32), &dir);
+        take_shot(&mut commands, &dir, &format!("t{:04}", next as u32));
     }
-    let ended = matches!(state.get(), GameState::GameOver | GameState::Victory);
-
+    let ended = *state.get() == GameState::GameOver;
     if cfg.log && (t >= cfg.next_log || (ended && cfg.next_log < f32::MAX)) {
         cfg.next_log = if ended { f32::MAX } else { t + 5.0 };
         if let Ok((ctf, c)) = castle.single() {
-            let boss_info: Vec<String> = bosses
+            let fps = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
+            let boss: Vec<String> = bosses
                 .iter()
-                .map(|(t, e)| format!("{:?} hp={:.0} dist={:.0}", e.kind, e.hp, t.translation.distance(ctf.translation)))
+                .map(|(bt, e)| format!("{:?} {:.0}hp d{:.0}", e.kind, e.hp, bt.translation.distance(ctf.translation)))
                 .collect();
-            let fps = diagnostics
-                .get(&FrameTimeDiagnosticsPlugin::FPS)
-                .and_then(|d| d.smoothed())
-                .unwrap_or(0.0);
+            let mods: Vec<String> = loadout.modules.iter().map(|m| format!("{:?}{}", m.kind, m.level)).collect();
             info!(
-                "t={:>5.0}s state={:?} wave={} stage={} hp={:.0}/{:.0} xp={} enemies={} kills={} fps={:.0} bosses={:?}",
+                "t={:>4.0} {:?} lvl={} stage={} hp={:.0} enemies={} kills={} bosses={} endless={} fps={:.0} mods={:?} arts={} boss={:?}",
                 t,
                 state.get(),
-                waves.wave,
-                c.stage + 1,
+                progress.level,
+                loadout.stage + 1,
                 c.hp,
-                c.def().max_hp,
-                c.xp,
                 enemies.iter().count(),
                 stats.kills,
+                stats.bosses_killed,
+                if director.endless { format!("{:.0}s", director.endless_time) } else { "no".into() },
                 fps,
-                boss_info
+                mods,
+                loadout.artifacts.values().sum::<u32>(),
+                boss
             );
         }
     }
-
     if let Some(limit) = cfg.exit_after
         && (t >= limit || ended)
     {
-        // Give the last screenshot a moment to save.
         cfg.exit_after = None;
         cfg.shots.clear();
-        commands.spawn(Screenshot::primary_window()).observe(save_to_disk(format!("{}/final.png", cfg.shot_dir)));
-        commands.insert_resource(ExitSoon(30));
+        let dir = cfg.shot_dir.clone();
+        take_shot(&mut commands, &dir, "final");
+        commands.insert_resource(ExitSoon(40));
     }
 }
 
@@ -171,27 +280,5 @@ fn exit_soon(mut commands: Commands, soon: Option<ResMut<ExitSoon>>, mut exit: M
         commands.remove_resource::<ExitSoon>();
     } else {
         s.0 -= 1;
-    }
-}
-
-/// Test-only shortcuts: jump to a wave and/or make the castle unbreakable.
-fn cheats(
-    cfg: Res<DebugConfig>,
-    stats: Res<RunStats>,
-    mut waves: ResMut<WaveDirector>,
-    mut castle: Query<&mut Castle>,
-) {
-    let Ok(mut c) = castle.single_mut() else {
-        return;
-    };
-    if let Some(w) = cfg.start_wave
-        && waves.wave == 0
-        && stats.time < 1.0
-    {
-        waves.wave = w.saturating_sub(1);
-        c.xp = c.xp.max(2000);
-    }
-    if cfg.god {
-        c.hp = c.def().max_hp;
     }
 }

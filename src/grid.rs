@@ -1,15 +1,16 @@
 //! Spatial grid for enemies. Rebuilt every frame so that "who is near me?"
 //! only checks a few cells instead of every enemy on the map.
 
+use crate::art::p2;
 use crate::enemy::Enemy;
 use crate::{MAP_HALF, Sim};
 use bevy::prelude::*;
 
-const CELL: f32 = 64.0;
-const MARGIN: f32 = 256.0;
+const CELL: f32 = 4.0;
+const MARGIN: f32 = 30.0;
 
 /// Largest enemy radius. Searches add this so big enemies are never missed.
-pub const MAX_ENEMY_RADIUS: f32 = 90.0;
+pub const MAX_ENEMY_RADIUS: f32 = 9.0;
 
 pub struct GridPlugin;
 
@@ -97,7 +98,7 @@ fn rebuild_grid(mut grid: ResMut<Grid>, enemies: Query<(Entity, &Transform, &Ene
         if enemy.hp > 0.0 {
             grid.insert(GridEntry {
                 entity,
-                pos: tf.translation.truncate(),
+                pos: p2(tf.translation),
                 radius: enemy.radius,
             });
         }
