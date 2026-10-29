@@ -31,6 +31,8 @@ so nothing runs twice:
 | Troop models, walk cycle, bodies | `worktree-enemy-visuals` | `graphics-polish` (`animate_troops`, its corpses) |
 | Boss models, moving parts, collapse | `worktree-bosses` | `graphics-polish` (boss pieces on the old boss models, `BossAnim`, wrecks) |
 | Effects | `graphics-polish` (`vfx.rs`) | the old effects in `combat.rs` |
+| Weapon models and animation | `worktree-weapon-mounts` (`weapon_models.rs`, `weapons.rs`) | `graphics-polish` (its weapon rigs and weapon animation in `anim.rs`) |
+| Castle wheels, flags, sway | `graphics-polish` (`anim.rs`) | — |
 | Lighting | `smoother-play` (no shadows) | shadow markers in new code |
 
 ## 1. smoother-play
@@ -239,3 +241,85 @@ which `main` still needs for the bosses' fire pots, next to `main`'s
 - Found while testing: the banner's drop shadow (added by graphics-polish)
   never faded, so "Defend the realm!" stayed on screen as dark text. Fixed
   in `hud.rs`.
+
+## 5. worktree-weapon-mounts
+
+Found while listing the branches: a parallel session committed and pushed it
+during this work (it was still at the old `main` when the first list was
+made). No session was running on it any more when it was picked up.
+
+**What it does:** rebuilds all six weapons as rigs, a fixed mount plus
+moving parts (`weapon_models.rs`): wider and lower, with chamfered timbers,
+iron straps, rivets, turned bronze barrels, ropes and chains. `weapons.rs`
+animates them from `WeaponFired` messages sent where the guns really fire:
+the ballista turns, looses and is winched back, the bombard turns, elevates
+and kicks, the cannons recoil and run out, the archers turn and loose, the
+ram swings on its chains, the mine chute feeds one mine at a time. New stone
+gun platforms on the side walls (stages 2 and 3), side weapons face
+outward, cannons on braced platforms outside the walls. Test switches
+`SIEGE_STAGE`, `SIEGE_VARIANT`, `SIEGE_LOADOUT`, `SIEGE_CAM`, `SIEGE_ARMORY`.
+
+**Incomplete (from its TODO):** the last round of changes (platforms, mount
+positions, braces, bronze tint, armory, close-up camera) was never looked
+at; FPS with every weapon at stage 3 not measured; not merged.
+
+**Review and test (on the branch):**
+- Builds with no warnings; clippy: two over-indented doc lines.
+- Armory with the close-up camera, one screenshot a second: the bombard
+  turns and elevates between frames; all six weapons are there and fire.
+- All six weapons on stages 1, 2 and 3 from the front-right: platforms,
+  outward-facing wall weapons, outside cannon platforms with braces, ram and
+  chute flush with the castle; nothing floats or cuts into the wheels.
+- Level-up card portraits frame each weapon well.
+- Stage 3 with all weapons: 21-27 FPS on this branch (old shadows on; the
+  GPU is the limit, not the weapons).
+- One test run hung on a level-up card screen because it ran without the
+  autopilot; that was the test, not the game. The test helper now has a hard
+  time limit.
+
+**Finished / polished (on the branch):** doc indent fixed; checklist
+updated with the results.
+
+**Performance:** weapon parts copied their pose into their transform every
+frame even when it had not changed, which makes Bevy recompute each part and
+its meshes. They now only write when the pose changes. On this branch the
+difference was inside the run-to-run noise (20-25 FPS after, 21-27 before),
+because the shadows dominate.
+
+**Merge — conflicts and decisions:** graphics-polish and this branch both
+animated the weapons. This branch's weapons were kept; graphics-polish keeps
+the castle (wheels, flags, lean and sway).
+- `player.rs`: the weapons mount inside graphics-polish's swaying castle
+  body, with this branch's positions, facing and mirrored side guns.
+- `assets.rs`: `castle_rigs` stay; `module_rigs` replaced by `rigs`. Both
+  branches had types called `RigHandle` and `PartHandle`; the weapon ones are
+  written with their path (`crate::weapons::...`).
+- `models.rs` / `anim.rs`: graphics-polish's weapon models (`models::module`)
+  and its weapon animation (`WeaponFire`, module owners, `Turret`, `Recoil`,
+  `Archer`, `Ammo`, `Swing` roles, `MountOf`) removed; `anim.rs` now only
+  moves the castle and shot trails.
+- `debug.rs`: every switch from both sides kept. The close-up camera looked
+  for "the" 3D camera; on `main` it now looks for `MainCamera`, because the
+  scene is drawn by a second screen camera since smoother-play.
+- `modules.rs`: kept the `WeaponFired` messages and graphics-polish's bolt
+  height.
+- `world.rs`: kept smoother-play's camera (real time, mouse zoom), made
+  `follow_camera` and `PlayerZoom` public for the close-up camera's ordering.
+- `main.rs`: all new modules; `WeaponsPlugin` moved to the second plugin
+  group (Bevy allows 15 per group).
+- graphics-polish's muzzle blast had no user left, so the cannons now fire
+  with it (flash, light, smoke, sparks) instead of plain smoke.
+- README: weapons description, new files, new test switches.
+
+**After merging (on `main`):** builds with no warnings or clippy findings.
+Armory, stage 3 with all weapons, and 30 s of normal play at level 12: no
+crash; 41-61 FPS in normal play. The Siege Tower's new crew was checked from
+above with the close-up camera.
+
+## README screenshots
+
+Retaken on `main` after all merges (asked for by the bosses and
+graphics-polish checklists): the Iron Citadel against the Warlord, a
+level-up card screen, and a busy endless-mode moment with the Siege Tower.
+The README caption said "Grand Citadel", which is not a stage name; it now
+says "Iron Citadel".
