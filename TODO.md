@@ -32,9 +32,9 @@ the boss). Add `SIEGE_AUTOPILOT=1` to let the castle drive itself.
   spire ran off the top of the screen. The framing now projects the boss's
   top through the real camera and rises until it fits below the HUD.
 - Fights were too short: in a full autopilot run (2x clock, god mode) the
-  bosses fell in 20-40 s. Base health raised: Siege Tower 1400 -> 2800,
-  War Wagons 800 -> 2000, Juggernaut 2600 -> 5200, Trebuchet 3000 -> 10000,
-  Warlord 7500 -> 20000.
+  bosses fell in 20-40 s. After two tuning runs the base health is: Siege
+  Tower 1400 -> 2400, War Wagons 800 -> 2400, Juggernaut 2600 -> 5200,
+  Trebuchet 3000 -> 8000, Warlord 7500 -> 15000 (fights of ~1-2 minutes).
 - Warning rings stand out clearly on grass and roads.
 - Boss parts now only update their transform when it changes (less work for
   Bevy's transform propagation every frame).
