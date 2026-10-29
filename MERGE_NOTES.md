@@ -108,7 +108,54 @@ too (`TODO.md` auto-merged with the bosses checklist).
 
 ## 3. worktree-bosses
 
-Conflicts and decisions:
+**What it does:** replaces the five bosses with colossal ones (3-10x the
+castle): new models built as rigs of moving parts (`boss_models.rs`), 3-4
+attacks each announced by red rings and lanes, harder phases at low health,
+capsule hit shapes you cannot drive through, burning ground, boulders that
+crush troops, a collapse animation per boss with gold at the end
+(`boss.rs`, `boss_ai.rs`), and a camera that pulls back to frame a near boss.
+
+**Incomplete (from its TODO):** not rebuilt after its last cleanup; FPS not
+measured (one test showed 2-3 FPS); camera pull-back unconfirmed; bosses not
+played; health and damage not tuned; warning visibility unchecked; not merged;
+no README screenshot.
+
+**Review and test (on the branch):**
+- Builds with no warnings; clippy had one finding (`is_multiple_of`), fixed.
+- Each boss alone for 25 s (`SIEGE_BOSS=1..5`), then all five together
+  (`SIEGE_GALLERY=1`): no crash; 13-41 FPS on this branch, which still has
+  the old shadows. The 2-3 FPS came from a build running at the same time.
+- Screenshots: Trebuchet arm swing and its red target rings show clearly on
+  grass and roads; the Juggernaut and castle stay framed together.
+- The camera pulled back but cut off tall bosses: the Siege Tower's top and
+  the Warlord's spire ran off the top of the screen.
+- A full autopilot game (2x clock, god mode) beat every boss in 20-40 s:
+  Siege Tower ~40 s, War Wagons ~30 s, Juggernaut ~40 s, Trebuchet ~20 s,
+  Warlord ~30 s. The checklist asks for one to two minutes.
+
+**Finished / polished (on the branch):**
+- Camera framing now projects the castle, the near part of the boss and the
+  boss's top through the real camera and raises the camera until all of them
+  fit below the HUD bars (`boss::on_screen`).
+- Base boss health raised in two tuning runs. First pass (2800 / 2000 /
+  5200 / 10000 / 20000) gave fights of ~110 / 55 / 78 / 130 / 155 s on
+  `main`; the final values are Siege Tower 1400 -> 2400, War Wagons
+  800 -> 2400, Juggernaut 2600 -> 5200, Trebuchet 3000 -> 8000, Warlord
+  7500 -> 15000, aiming at roughly 65-115 s each. That full 15-minute run
+  had no crash and 23-66 FPS (median 41) with up to 1013 troops.
+- The README boss screenshot (`docs/bosses.png`) is retaken after the
+  weapons branch is merged, so it shows the final castle (see section 5).
+- TODO.md records what was checked.
+
+**Performance:** boss parts wrote their transform every frame even when they
+did not move, so Bevy re-propagated every boss mesh every frame. They now
+only write when the pose changes. Troop crushing already uses the grid.
+
+**Second merge:** one conflict in `boss.rs` (the line that divided by the
+camera height). Kept the new projected framing, with its base height set to
+`world::CAMERA_HEIGHT` (58 m on `main`).
+
+**First merge — conflicts and decisions:**
 
 - `world.rs` (camera): kept `smoother-play`'s higher camera (58 m), stage zoom
   and mouse-wheel zoom, and added the boss pull-back and focus shift from
