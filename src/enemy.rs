@@ -46,17 +46,6 @@ pub struct EnemyStats {
 }
 
 impl EnemyKind {
-    pub const ALL: [EnemyKind; 9] = [
-        EnemyKind::Footman,
-        EnemyKind::Archer,
-        EnemyKind::Knight,
-        EnemyKind::Cart,
-        EnemyKind::SiegeTower,
-        EnemyKind::WarWagon,
-        EnemyKind::Juggernaut,
-        EnemyKind::Trebuchet,
-        EnemyKind::Warlord,
-    ];
 
     pub fn stats(self) -> EnemyStats {
         let (hp, speed, radius, dps, coins) = match self {
@@ -177,12 +166,16 @@ pub fn spawn_enemy(
             slot,
             attack: 1.0 + (pos.x.abs() % 1.5),
         },
-        Mesh3d(assets.enemies[&kind].clone()),
-        MeshMaterial3d(assets.m.vc.clone()),
         Transform::from_translation(w3(pos, 0.0)).with_rotation(yaw(heading)),
+        Visibility::Visible,
     ));
     if kind.is_boss() {
+        // Bosses are textured models made of several pieces.
         e.insert(Boss { state: BossState::Approach, timer: 3.0, timer2: 2.0, dir: Vec2::X, telegraph: None });
+        let model = assets.bosses[&kind].clone();
+        e.with_children(|p| model.spawn_parts(p, ()));
+    } else {
+        e.insert((Mesh3d(assets.enemies[&kind].clone()), MeshMaterial3d(assets.m.vc.clone())));
     }
     e.id()
 }
@@ -343,7 +336,7 @@ fn boss_ai(
     stats: Res<Stats>,
     loadout: Res<Loadout>,
     mut castle: Query<(&Transform, &mut Castle), Without<Enemy>>,
-    mut bosses: Query<(&mut Transform, &mut Enemy, &mut Boss, &mut MeshMaterial3d<StandardMaterial>)>,
+    mut bosses: Query<(&mut Transform, &mut Enemy, &mut Boss)>,
 ) {
     let Ok((ctf, mut c)) = castle.single_mut() else {
         return;
@@ -353,7 +346,7 @@ fn boss_ai(
     let crad = c.radius;
     let ci = castle_info(ctf, &c, &stats, &loadout);
 
-    for (mut tf, mut en, mut boss, mut mat) in &mut bosses {
+    for (mut tf, mut en, mut boss) in &mut bosses {
         let pos = p2(tf.translation);
         let to = cpos - pos;
         let dist = to.length().max(0.01);
@@ -476,10 +469,11 @@ fn boss_ai(
         }
         en.flash = (en.flash - dt).max(0.0);
         let want = en.flash > 0.0;
-        if want != en.flashing {
-            en.flashing = want;
-            mat.0 = if want { assets.m.flash.clone() } else { assets.m.vc.clone() };
+        if want && !en.flashing {
+            // Bosses throw sparks when hit instead of flashing.
+            spawn_fx(&mut commands, &assets, FxKind::Spark, w3(pos, 2.0 + en.radius * 0.4), 0.8 + en.radius * 0.15, Vec3::ZERO);
         }
+        en.flashing = want;
     }
 }
 

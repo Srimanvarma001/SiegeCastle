@@ -184,9 +184,7 @@ fn frame_color(offer: Offer) -> Color {
     }
 }
 
-fn text(s: impl Into<String>, size: f32, color: Color) -> (Text, TextFont, TextColor) {
-    (Text::new(s), TextFont::from_font_size(size), TextColor(color))
-}
+use crate::assets::{body as text, title};
 
 fn stat_line(label: &str, from: f32, to: f32) -> String {
     format!("{label:<14} {from:>5.0} -> {to:.0}")
@@ -253,11 +251,11 @@ fn build_choice_ui(commands: &mut Commands, choice: &Choice, loadout: &Loadout, 
             GlobalZIndex(10),
         ))
         .id();
-    let title = commands.spawn(text(choice.title.clone(), 46.0, Color::srgb(0.98, 0.94, 0.86))).id();
+    let heading = commands.spawn(title(choice.title.clone(), 48.0, Color::srgb(0.98, 0.92, 0.80))).id();
     let row = commands
         .spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(26.0), ..default() })
         .id();
-    commands.entity(root).add_children(&[title, row]);
+    commands.entity(root).add_children(&[heading, row]);
 
     for (i, &offer) in choice.offers.iter().enumerate() {
         let (name, icon, tag, lines) = card_content(offer, loadout);
@@ -301,7 +299,7 @@ fn build_choice_ui(commands: &mut Commands, choice: &Choice, loadout: &Loadout, 
                     ..default()
                 },
                 BackgroundColor(PARCHMENT),
-                children![text(name.to_uppercase(), 22.0, INK)],
+                children![title(name.to_uppercase(), 20.0, INK)],
             ))
             .id();
         let icon_box = commands
@@ -323,12 +321,12 @@ fn build_choice_ui(commands: &mut Commands, choice: &Choice, loadout: &Loadout, 
                 )],
             ))
             .id();
-        let tag = commands.spawn(text(tag, 15.0, Color::srgb(0.96, 0.78, 0.36))).id();
+        let tag = commands.spawn(title(tag, 14.0, Color::srgb(0.96, 0.78, 0.36))).id();
         commands.entity(card).add_children(&[banner, icon_box, tag]);
         for line in lines {
             let t = commands
                 .spawn((
-                    text(line, 16.0, Color::srgb(0.90, 0.88, 0.84)),
+                    text(line, 19.0, Color::srgb(0.90, 0.88, 0.84)),
                     TextLayout::justify(Justify::Center),
                     Node { max_width: Val::Px(250.0), ..default() },
                 ))

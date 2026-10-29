@@ -1,7 +1,8 @@
 //! The battlefield: terrain, forests, ponds and a river, farms to absorb,
 //! sheep to scoop up, plus the follow camera and sunlight.
 
-use crate::art::{self, p2, w3, yaw, Model};
+use crate::art::{self, p2, w3, yaw};
+use crate::models::{self, Model};
 use crate::assets::GameAssets;
 use crate::combat::{spawn_fx, FxKind};
 use crate::items::{Loadout, Stats};
@@ -10,6 +11,7 @@ use crate::progression::Progress;
 use crate::{GameEntity, GameRng, GameState, MAP_HALF, RunStats, Shake, Sim};
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::light::{CascadeShadowConfigBuilder, NotShadowCaster};
+use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use rand::Rng;
@@ -80,34 +82,52 @@ fn fbm(p: Vec2, seed: u32) -> f32 {
 // --- Setup ------------------------------------------------------------------
 
 fn spawn_camera(mut commands: Commands) {
-    commands.spawn((
+    let fast = std::env::var("SIEGE_LOWRES").is_ok();
+    let mut cam = commands.spawn((
         Camera3d::default(),
         bevy::camera::Hdr,
-        Bloom { intensity: 0.18, ..Bloom::NATURAL },
-        Tonemapping::TonyMcMapface,
-        Projection::Perspective(PerspectiveProjection { fov: 35f32.to_radians(), ..default() }),
+        Bloom { intensity: 0.12, ..Bloom::NATURAL },
+        Tonemapping::AgX,
+        Projection::Perspective(PerspectiveProjection { fov: 32f32.to_radians(), ..default() }),
         Transform::from_xyz(0.0, 46.0, 20.0).looking_at(Vec3::ZERO, Vec3::Y),
+        // Light haze in the distance, tinted by the sun.
+        DistanceFog {
+            color: Color::srgba(0.62, 0.68, 0.74, 1.0),
+            directional_light_color: Color::srgba(1.0, 0.85, 0.65, 0.4),
+            directional_light_exponent: 20.0,
+            falloff: FogFalloff::Linear { start: 70.0, end: 260.0 },
+        },
+        bevy::light::ShadowFilteringMethod::Gaussian,
     ));
+    if !fast {
+        // Soft contact shadows in corners and crevices, and smooth edges.
+        cam.insert((
+            Msaa::Off,
+            bevy::pbr::ScreenSpaceAmbientOcclusion::default(),
+            bevy::anti_alias::smaa::Smaa::default(),
+        ));
+    }
 }
 
 fn spawn_light(mut commands: Commands) {
+    // Cool sky light from above, warm late-afternoon sun for long shadows.
     commands.insert_resource(GlobalAmbientLight {
-        color: Color::srgb(0.95, 0.92, 0.85),
-        brightness: 320.0,
+        color: Color::srgb(0.70, 0.78, 0.92),
+        brightness: 380.0,
         ..default()
     });
     commands.spawn((
         DirectionalLight {
-            color: Color::srgb(1.0, 0.95, 0.86),
-            illuminance: 3_600.0,
+            color: Color::srgb(1.0, 0.90, 0.76),
+            illuminance: 6_000.0,
             shadow_maps_enabled: std::env::var("SIEGE_LOWRES").is_err(),
             ..default()
         },
-        Transform::from_xyz(-40.0, 90.0, 35.0).looking_at(Vec3::ZERO, Vec3::Y),
+        Transform::from_xyz(-70.0, 62.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y),
         CascadeShadowConfigBuilder {
-            num_cascades: 2,
-            first_cascade_far_bound: 70.0,
-            maximum_distance: 200.0,
+            num_cascades: 3,
+            first_cascade_far_bound: 45.0,
+            maximum_distance: 180.0,
             ..default()
         }
         .build(),
@@ -121,7 +141,6 @@ fn spawn_world(
     mut rng: ResMut<GameRng>,
 ) {
     let seed: u32 = rng.0.random();
-    let vc = assets.m.vc.clone();
 
     // Water first, so everything else can avoid it.
     let mut water = Water::default();
@@ -146,21 +165,26 @@ fn spawn_world(
 
     // Ground with soft patches; darker grass near water.
     let w = &water;
+    // The grass texture is tinted per vertex: lush, dry and shaded patches.
     let ground = art::ground_mesh(MAP_HALF + 40.0, 170, |p| {
         let n = fbm(p, seed);
-        let base = art::rgb(0.60, 0.66, 0.37);
-        let light = art::rgb(0.71, 0.72, 0.43);
-        let dark = art::rgb(0.49, 0.58, 0.31);
-        let mut c = if n > 0.5 { base.mix(&light, (n - 0.5) * 2.0) } else { dark.mix(&base, n * 2.0) };
+        let dry = fbm(p * 0.7 + Vec2::splat(91.0), seed + 3);
+        let base = art::rgb(1.0, 1.0, 1.0);
+        let lush = art::rgb(0.82, 0.95, 0.78);
+        let pale = art::rgb(1.18, 1.1, 0.86);
+        let mut c = if n > 0.5 { base.mix(&pale, (n - 0.5) * 1.6) } else { lush.mix(&base, n * 2.0) };
+        if dry > 0.62 {
+            c = c.mix(&art::rgb(1.3, 1.1, 0.75), ((dry - 0.62) * 3.0).min(0.6));
+        }
         if w.near(p, 4.0) {
-            c = c.mix(&art::rgb(0.40, 0.52, 0.30), 0.6);
+            c = c.mix(&art::rgb(0.65, 0.82, 0.62), 0.6);
         }
         if p.x.abs() > MAP_HALF || p.y.abs() > MAP_HALF {
-            c = c.mix(&art::rgb(0.30, 0.40, 0.24), 0.7);
+            c = c.mix(&art::rgb(0.45, 0.55, 0.42), 0.7);
         }
         c
     });
-    commands.spawn((GameEntity, Mesh3d(meshes.add(ground)), MeshMaterial3d(vc.clone()), Transform::IDENTITY, NotShadowCaster));
+    commands.spawn((GameEntity, Mesh3d(meshes.add(ground)), MeshMaterial3d(assets.m.grass.clone()), Transform::IDENTITY, NotShadowCaster));
 
     // Water meshes.
     for &(c, r) in &water.ponds {
@@ -197,7 +221,7 @@ fn spawn_world(
             let p = c + Vec2::new(rng.0.random_range(-12.0..12.0), rng.0.random_range(-9.0..9.0));
             if free(p) {
                 let k = chunk_of(p);
-                art::add_tree(&mut solid[k], w3(p, 0.0), rng.0.random_range(0.8..1.3), rng.0.random_range(0.0..0.5));
+                models::add_tree(&mut solid[k], w3(p, 0.0), rng.0.random_range(0.8..1.3), rng.0.random_range(0.0..1.0), rng.0.random());
                 has_solid[k] = true;
             }
         }
@@ -206,7 +230,7 @@ fn spawn_world(
         let p = Vec2::new(rng.0.random_range(-215.0..215.0), rng.0.random_range(-215.0..215.0));
         if free(p) {
             let k = chunk_of(p);
-            art::add_tree(&mut solid[k], w3(p, 0.0), rng.0.random_range(0.7..1.1), rng.0.random_range(0.0..0.6));
+            models::add_tree(&mut solid[k], w3(p, 0.0), rng.0.random_range(0.7..1.1), rng.0.random_range(0.0..1.0), rng.0.random());
             has_solid[k] = true;
         }
     }
@@ -214,7 +238,7 @@ fn spawn_world(
         let p = Vec2::new(rng.0.random_range(-215.0..215.0), rng.0.random_range(-215.0..215.0));
         if free(p) {
             let k = chunk_of(p);
-            art::add_rock(&mut solid[k], w3(p, 0.1), rng.0.random_range(0.3..0.8));
+            models::add_rock(&mut solid[k], w3(p, 0.1), rng.0.random_range(0.3..0.8), rng.0.random());
             has_solid[k] = true;
         }
     }
@@ -231,28 +255,32 @@ fn spawn_world(
             for row in 0..2 {
                 let q = p + jitter * row as f32 + Vec2::new(rng.0.random_range(-1.5..1.5), rng.0.random_range(-1.5..1.5));
                 let k = chunk_of(q);
-                art::add_pine(&mut solid[k], w3(q, 0.0), rng.0.random_range(1.2..1.8));
+                models::add_pine(&mut solid[k], w3(q, 0.0), rng.0.random_range(1.2..1.8), rng.0.random());
                 has_solid[k] = true;
             }
         }
         t += 4.5;
     }
-    for _ in 0..9000 {
+    for _ in 0..5000 {
         let p = Vec2::new(rng.0.random_range(-218.0..218.0), rng.0.random_range(-218.0..218.0));
         if !w.near(p, 1.0) {
             let k = chunk_of(p);
-            art::add_tuft(&mut grass[k], w3(p, 0.0), rng.0.random_range(0.7..1.4));
+            models::add_tuft(&mut grass[k], w3(p, 0.0), rng.0.random_range(0.7..1.4));
             has_grass[k] = true;
         }
     }
     for (k, model) in solid.into_iter().enumerate() {
         if has_solid[k] {
-            commands.spawn((GameEntity, Mesh3d(meshes.add(model.build())), MeshMaterial3d(vc.clone()), Transform::IDENTITY));
+            for (mat, mesh) in model.build() {
+                commands.spawn((GameEntity, Mesh3d(meshes.add(mesh)), MeshMaterial3d(assets.mat(mat)), Transform::IDENTITY));
+            }
         }
     }
     for (k, model) in grass.into_iter().enumerate() {
         if has_grass[k] {
-            commands.spawn((GameEntity, Mesh3d(meshes.add(model.build())), MeshMaterial3d(vc.clone()), Transform::IDENTITY, NotShadowCaster));
+            for (mat, mesh) in model.build() {
+                commands.spawn((GameEntity, Mesh3d(meshes.add(mesh)), MeshMaterial3d(assets.mat(mat)), Transform::IDENTITY, NotShadowCaster));
+            }
         }
     }
 
@@ -284,13 +312,10 @@ fn free_spot(rng: &mut GameRng, water: &Water, avoid: Vec2, min_dist: f32) -> Op
 fn spawn_village(commands: &mut Commands, assets: &GameAssets, rng: &mut GameRng, p: Vec2) {
     let i = rng.0.random_range(0..assets.villages.len());
     let angle = rng.0.random_range(0..4) as f32 * std::f32::consts::FRAC_PI_2;
-    commands.spawn((
-        GameEntity,
-        Village,
-        Mesh3d(assets.villages[i].clone()),
-        MeshMaterial3d(assets.m.vc.clone()),
-        Transform::from_translation(w3(p, 0.0)).with_rotation(yaw(angle)),
-    ));
+    let model = assets.villages[i].clone();
+    commands
+        .spawn((GameEntity, Village, Transform::from_translation(w3(p, 0.0)).with_rotation(yaw(angle)), Visibility::Visible))
+        .with_children(|c| model.spawn_parts(c, ()));
 }
 
 fn spawn_flock(commands: &mut Commands, assets: &GameAssets, rng: &mut GameRng, p: Vec2, n: usize) {

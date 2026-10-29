@@ -1,12 +1,12 @@
 # SiegeCastle
 
-A fast 3D medieval action roguelike made with **Rust + Bevy 0.20**.
+A fast 3D medieval action roguelike made with **Rust + Bevy 0.20**, with a realistic look: a gothic castle of cut stone and slate spires, textured materials, soft shadows and atmospheric light.
 
 Drive a castle on wheels across the countryside, plow through marching armies, and bolt new weapons onto your walls as you level up. Your castle grows through 3 stages. Beat 5 bosses, then survive the endless siege for as long as you can, as enemies grow exponentially in numbers and strength.
 
 ![Gameplay](docs/gameplay.png)
 
-| Level-up cards | Bosses |
+| Level-up cards | Grand Citadel vs. the Warlord |
 |---|---|
 | ![Cards](docs/cards.png) | ![Bosses](docs/bosses.png) |
 
@@ -77,6 +77,15 @@ Growing fully repairs the castle and blasts nearby enemies away.
 
 **Endless siege.** After the Warlord falls there is no more countdown to a finish. Every 30 seconds enemies get about 22% more health, 10% more damage, and spawn 15% faster in bigger groups, and random bosses keep returning. The run ends when your castle falls.
 
+## How it looks
+
+Everything is generated in code, with no art files to download:
+
+- **Gothic castle:** round towers with corbelled parapets and steep slate spires, a great hall with buttresses, lancet windows and a rose window, curtain walls with battlements, a gatehouse with a portcullis, and a clock tower at stage 3. It all rides on a timber-and-iron siege platform.
+- **Realistic materials:** cut limestone blocks with mortar, overlapping slate shingles with moss, weathered planks, forged iron with rust, meadow grass, mud, wheat and plaster. Each surface has color, relief (normal map) and roughness/metal maps, tiles seamlessly, and has mipmaps for crisp distance views.
+- **Lighting:** a warm late-afternoon sun with soft cascaded shadows, cool sky light, screen-space ambient occlusion, distance haze, bloom on fire, and SMAA anti-aliasing.
+- **UI:** Cinzel titles and EB Garamond text (both under the SIL Open Font License, see `assets/fonts/`).
+
 ## Why it is fast
 
 - **ECS (Entity Component System):** Bevy stores game data in a cache-friendly layout and runs systems in parallel.
@@ -90,7 +99,10 @@ Growing fully repairs the castle and blasts nearby enemies away.
 ```
 src/
   main.rs         app setup, game states, frame ordering
-  art.rs          all models built in code, plus UI icons
+  art.rs          coordinates, castle mount points, terrain meshes
+  models.rs       every 3D model (castle, troops, bosses, farms, trees)
+  texgen.rs       realistic stone/slate/wood/iron/grass textures, made in code
+  icons.rs        UI icons
   assets.rs       builds models and materials once at startup
   items.rs        modules, artifacts, castle stages, stat math
   player.rs       castle driving, nitro, health, looks, growth
@@ -124,6 +136,6 @@ SIEGE_AUTOPILOT=1 SIEGE_LOG=1 SIEGE_SHOTS=30,120 SIEGE_EXIT_AFTER=150 cargo run 
 - `SIEGE_ENDLESS=1`: start in endless mode
 - `SIEGE_GALLERY=1`: spawn all five bosses at once
 - `SIEGE_GOD=1`: castle cannot be destroyed
-- `SIEGE_LOWRES=1`: small window and no shadows, for quick tests on machines without a GPU
+- `SIEGE_LOWRES=1`: small window, no shadows or ambient occlusion, for quick tests on machines without a GPU
 
-Inspired by the "castle on wheels" idea from Wanderburg. All code, models, names and text in this project are original.
+Inspired by the "castle on wheels" idea from Wanderburg and by gothic castle architecture. All code, models, textures, names and text in this project are original. Fonts: Cinzel and EB Garamond, SIL Open Font License 1.1.

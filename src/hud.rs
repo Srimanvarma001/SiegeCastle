@@ -71,18 +71,19 @@ struct Overlay;
 struct OverlayText;
 
 const FRAME: Color = Color::srgb(0.16, 0.13, 0.13);
+const PANEL_BG: Color = Color::srgba(0.07, 0.05, 0.04, 0.72);
+const BRONZE: Color = Color::srgb(0.55, 0.42, 0.25);
 const GOLD: Color = Color::srgb(0.98, 0.72, 0.22);
 const SLOT_BG: Color = Color::srgb(0.20, 0.17, 0.20);
 
-fn text(s: impl Into<String>, size: f32, color: Color) -> (Text, TextFont, TextColor) {
-    (Text::new(s), TextFont::from_font_size(size), TextColor(color))
-}
+use crate::assets::{body as text, title};
 
 fn round(px: f32) -> BorderRadius {
     BorderRadius::all(CornerRadius::circular(Val::Px(px)))
 }
 
 fn spawn_hud(mut commands: Commands, icons: Res<Icons>) {
+
     // XP bar and level (top center), boss timer under it.
     commands.spawn((
         Node {
@@ -139,7 +140,7 @@ fn spawn_hud(mut commands: Commands, icons: Res<Icons>) {
                         },
                         BackgroundColor(Color::srgb(0.07, 0.06, 0.06)),
                         BorderColor::all(GOLD),
-                        children![(LevelText, text("1", 20.0, GOLD))],
+                        children![(LevelText, title("1", 20.0, GOLD))],
                     ),
                 ],
             ),
@@ -148,7 +149,7 @@ fn spawn_hud(mut commands: Commands, icons: Res<Icons>) {
                 Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(6.0), ..default() },
                 children![
                     (ImageNode::new(icons.get(Icon::Skull)), Node { width: Val::Px(26.0), height: Val::Px(26.0), ..default() }),
-                    (BossTimerText, text("", 22.0, Color::srgb(0.95, 0.25, 0.20))),
+                    (BossTimerText, title("", 20.0, Color::srgb(0.95, 0.30, 0.22))),
                 ],
             ),
             (
@@ -156,7 +157,7 @@ fn spawn_hud(mut commands: Commands, icons: Res<Icons>) {
                 Visibility::Hidden,
                 Node { flex_direction: FlexDirection::Column, align_items: AlignItems::Center, row_gap: Val::Px(3.0), ..default() },
                 children![
-                    (BossName, text("", 18.0, Color::srgb(1.0, 0.85, 0.75))),
+                    (BossName, title("", 18.0, Color::srgb(1.0, 0.86, 0.72))),
                     (
                         Node {
                             width: Val::Px(440.0),
@@ -184,15 +185,17 @@ fn spawn_hud(mut commands: Commands, icons: Res<Icons>) {
             position_type: PositionType::Absolute,
             left: Val::Px(14.0),
             top: Val::Px(14.0),
-            padding: UiRect::all(Val::Px(8.0)),
+            padding: UiRect::all(Val::Px(10.0)),
             flex_direction: FlexDirection::Column,
-            row_gap: Val::Px(4.0),
+            row_gap: Val::Px(5.0),
+            border: UiRect::all(Val::Px(2.0)),
             border_radius: round(10.0),
             ..default()
         },
-        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.35)),
+        BackgroundColor(PANEL_BG),
+        BorderColor::all(BRONZE),
         children![
-            (StageText, text("", 15.0, Color::srgb(1.0, 0.86, 0.55))),
+            (StageText, title("", 15.0, Color::srgb(1.0, 0.86, 0.55))),
             (
                 Node {
                     width: Val::Px(280.0),
@@ -254,8 +257,8 @@ fn spawn_hud(mut commands: Commands, icons: Res<Icons>) {
                 border_radius: round(12.0),
                 ..default()
             },
-            BackgroundColor(Color::srgb(0.12, 0.10, 0.11)),
-            BorderColor::all(FRAME),
+            BackgroundColor(PANEL_BG),
+            BorderColor::all(BRONZE),
         ))
         .id();
     let nitro = commands
@@ -350,11 +353,13 @@ fn spawn_hud(mut commands: Commands, icons: Res<Icons>) {
             position_type: PositionType::Absolute,
             right: Val::Px(14.0),
             top: Val::Px(14.0),
-            padding: UiRect::all(Val::Px(8.0)),
+            padding: UiRect::all(Val::Px(10.0)),
+            border: UiRect::all(Val::Px(2.0)),
             border_radius: round(10.0),
             ..default()
         },
-        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.35)),
+        BackgroundColor(PANEL_BG),
+        BorderColor::all(BRONZE),
         children![(InfoText, text("", 14.0, Color::WHITE), TextLayout::justify(Justify::Right))],
     ));
 
@@ -370,8 +375,8 @@ fn spawn_hud(mut commands: Commands, icons: Res<Icons>) {
             ..default()
         },
         children![
-            (BannerText, text("", 40.0, Color::WHITE)),
-            (BannerSub, text("", 20.0, Color::WHITE)),
+            (BannerText, title("", 42.0, Color::WHITE)),
+            (BannerSub, text("", 22.0, Color::WHITE)),
         ],
     ));
 
@@ -389,7 +394,7 @@ fn spawn_hud(mut commands: Commands, icons: Res<Icons>) {
             ..default()
         },
         BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.6)),
-        children![(OverlayText, text("", 30.0, Color::WHITE), TextLayout::justify(Justify::Center))],
+        children![(OverlayText, title("", 30.0, Color::WHITE), TextLayout::justify(Justify::Center))],
     ));
 }
 

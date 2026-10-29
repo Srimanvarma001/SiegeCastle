@@ -362,8 +362,8 @@ fn enemy_deaths(
             commands.spawn((
                 GameEntity,
                 Coin { xp: value },
-                Mesh3d(assets.coin.clone()),
-                MeshMaterial3d(assets.m.coin_glow.clone()),
+                Mesh3d(assets.coin.0[0].0.clone()),
+                MeshMaterial3d(assets.coin.0[0].1.clone()),
                 Transform::from_translation(w3(pos + off, 0.6)),
                 NotShadowCaster,
             ));

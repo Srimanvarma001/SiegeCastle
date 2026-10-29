@@ -19,10 +19,13 @@ mod director;
 mod enemy;
 mod grid;
 mod hud;
+mod icons;
 mod items;
+mod models;
 mod modules;
 mod player;
 mod progression;
+mod texgen;
 mod world;
 
 /// The battlefield is a square from -MAP_HALF to +MAP_HALF (world units).

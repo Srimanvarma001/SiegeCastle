@@ -55,7 +55,7 @@ impl Castle {
 }
 
 /// Model pieces on the castle. Rebuilt when it grows or gets a module.
-#[derive(Component)]
+#[derive(Component, Clone)]
 pub struct CastlePart;
 
 /// A mounted weapon model; its world position is where shots come from.
@@ -253,28 +253,32 @@ fn rebuild_castle(
     let variant = if loadout.stage == 0 { Variant::Base } else { loadout.variant };
     let mounts = castle_mounts(loadout.stage);
     let scale = 1.0 + loadout.stage as f32 * 0.25;
+    let body = assets.castle[&(loadout.stage, variant)].clone();
+    let modules = assets.modules.clone();
+    let owned = loadout.modules.clone();
     commands.entity(e).despawn_related::<Children>().with_children(|p| {
-        p.spawn((
-            CastlePart,
-            Mesh3d(assets.castle[&(loadout.stage, variant)].clone()),
-            MeshMaterial3d(assets.m.vc.clone()),
-            Transform::IDENTITY,
-        ));
+        body.spawn_parts(p, CastlePart);
         let mut tops = mounts.top.iter();
-        for m in &loadout.modules {
+        for m in &owned {
             let at = match m.kind.mount() {
                 Mount::Top => *tops.next().unwrap_or(&mounts.top[0]),
                 Mount::Front => mounts.front,
                 Mount::Back => mounts.back,
                 Mount::Side => mounts.side,
             };
-            p.spawn((
-                CastlePart,
-                ModuleMount(m.kind),
-                Mesh3d(assets.modules[&m.kind].clone()),
-                MeshMaterial3d(assets.m.vc.clone()),
-                Transform::from_translation(at).with_scale(Vec3::splat(scale)),
-            ));
+            let model = modules[&m.kind].clone();
+            p.spawn((CastlePart, ModuleMount(m.kind), Transform::from_translation(at).with_scale(Vec3::splat(scale)), Visibility::Inherited))
+                .with_children(|q| model.spawn_parts(q, ()));
+            if m.kind.mount() == Mount::Side {
+                // Guns on the other side too, facing out.
+                let mirror = Vec3::new(at.x, at.y, -at.z);
+                p.spawn((
+                    CastlePart,
+                    Transform::from_translation(mirror).with_rotation(Quat::from_rotation_y(std::f32::consts::PI)).with_scale(Vec3::splat(scale)),
+                    Visibility::Inherited,
+                ))
+                .with_children(|q| model.spawn_parts(q, ()));
+            }
         }
     });
 }
