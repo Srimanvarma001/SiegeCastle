@@ -119,7 +119,7 @@ fn finish(
     for (e, mut cam, mut sc) in &mut cams {
         sc.0 += 1;
         let slot = (-1 - cam.order).max(0) as u32;
-        let turn = (*frame + slot) % count == 0;
+        let turn = (*frame + slot).is_multiple_of(count);
         if cam.is_active != turn {
             cam.is_active = turn;
         }
