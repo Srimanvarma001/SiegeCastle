@@ -48,6 +48,8 @@ pub struct Director {
     pub endless: bool,
     pub endless_time: f32,
     pub strength: Strength,
+    /// Story bosses beaten so far (the twin War Wagons count once).
+    pub defeated: Vec<EnemyKind>,
     group_timer: f32,
 }
 
@@ -59,6 +61,7 @@ impl Default for Director {
             endless: false,
             endless_time: 0.0,
             strength: Strength { hp: 1.0, dmg: 1.0 },
+            defeated: Vec::new(),
             group_timer: 2.0,
         }
     }
@@ -138,8 +141,8 @@ fn run_director(
     let e = d.endless_steps();
 
     // Strength grows slowly during the story, exponentially once endless.
-    let mut hp = 1.0 + 0.14 * minutes;
-    let mut dmg = 1.0 + 0.07 * minutes;
+    let mut hp = 1.0 + 0.22 * minutes;
+    let mut dmg = 1.0 + 0.12 * minutes;
     let mut rate = 1.0;
     let mut size = 1.0;
     if d.endless {
@@ -156,7 +159,7 @@ fn run_director(
 
     d.group_timer -= dt;
     if d.group_timer <= 0.0 {
-        d.group_timer = ((4.5 - 0.3 * minutes).max(1.4) / rate).max(0.25);
+        d.group_timer = ((4.2 - 0.3 * minutes).max(1.2) / rate).max(0.25);
         if alive < MAX_ENEMIES {
             // Often come from ahead, so you drive into them.
             let ahead = c.vel.length() > 4.0 && rng.0.random::<f32>() < 0.45;
@@ -170,11 +173,11 @@ fn run_director(
             let roll = rng.0.random::<f32>();
             let budget = MAX_ENEMIES - alive;
             let (count, mix): (f32, Vec<(EnemyKind, f32)>) = if minutes > 5.0 && roll < 0.12 {
-                (2.0 + minutes * 0.3, vec![(EnemyKind::Cart, 1.0)])
+                (2.0 + minutes * 0.4, vec![(EnemyKind::Cart, 1.0)])
             } else if minutes > 2.5 && roll < 0.35 {
-                (4.0 + minutes * 1.2, vec![(EnemyKind::Knight, 1.0)])
+                (5.0 + minutes * 2.0, vec![(EnemyKind::Knight, 1.0)])
             } else if minutes > 1.0 {
-                (12.0 + minutes * 3.0, vec![(EnemyKind::Footman, 0.75), (EnemyKind::Archer, 0.25)])
+                (12.0 + minutes * 5.0, vec![(EnemyKind::Footman, 0.75), (EnemyKind::Archer, 0.25)])
             } else {
                 (10.0 + minutes * 5.0, vec![(EnemyKind::Footman, 1.0)])
             };
@@ -215,8 +218,17 @@ fn on_boss_defeated(
     mut msgs: MessageReader<BossDefeated>,
     mut d: ResMut<Director>,
     mut banner: ResMut<Banner>,
+    bosses: Query<&Enemy, With<crate::enemy::Boss>>,
 ) {
     for BossDefeated(kind) in msgs.read() {
+        let others_left = bosses.iter().any(|e| e.kind == *kind && e.hp > 0.0);
+        if others_left {
+            banner.show(format!("{} destroyed!", kind.name()), "One more to go", 3.0);
+            continue;
+        }
+        if !d.endless && !d.defeated.contains(kind) {
+            d.defeated.push(*kind);
+        }
         if *kind == EnemyKind::Warlord && !d.endless {
             d.endless = true;
             d.endless_time = 0.0;

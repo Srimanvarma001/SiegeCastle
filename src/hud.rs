@@ -335,8 +335,11 @@ fn spawn_hud(mut commands: Commands, icons: Res<Icons>) {
             position_type: PositionType::Absolute,
             left: Val::Px(16.0),
             bottom: Val::Px(100.0),
+            max_height: Val::Px(250.0),
             flex_direction: FlexDirection::ColumnReverse,
+            flex_wrap: FlexWrap::Wrap,
             row_gap: Val::Px(4.0),
+            column_gap: Val::Px(10.0),
             ..default()
         },
     ));
@@ -592,6 +595,7 @@ fn update_artifacts(
 
 fn update_info(
     stats: Res<RunStats>,
+    director: Res<Director>,
     enemies: Query<(), With<Enemy>>,
     diagnostics: Res<DiagnosticsStore>,
     mut q: Query<&mut Text, With<InfoText>>,
@@ -605,7 +609,7 @@ fn update_info(
         fmt_time(stats.time),
         stats.kills,
         enemies.iter().count(),
-        stats.bosses_killed.min(5),
+        director.defeated.len(),
         fps
     ));
 }
@@ -654,7 +658,7 @@ fn update_overlay(
                 fmt_time(stats.time),
                 progress.level,
                 stats.kills,
-                stats.bosses_killed.min(5),
+                director.defeated.len(),
                 endless
             ))
         }

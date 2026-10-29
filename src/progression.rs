@@ -44,7 +44,7 @@ impl Default for Progress {
 }
 
 pub fn xp_needed(level: u32) -> f32 {
-    14.0 + 9.0 * (level - 1) as f32 + 0.15 * ((level - 1) as f32).powi(2)
+    20.0 + 13.0 * (level - 1) as f32 + 0.5 * ((level - 1) as f32).powi(2)
 }
 
 impl Progress {

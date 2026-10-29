@@ -252,7 +252,7 @@ fn debug_tick(
                 c.hp,
                 enemies.iter().count(),
                 stats.kills,
-                stats.bosses_killed,
+                director.defeated.len(),
                 if director.endless { format!("{:.0}s", director.endless_time) } else { "no".into() },
                 fps,
                 mods,
