@@ -273,7 +273,7 @@ pub struct StageInfo {
 
 pub fn stage_info(stage: usize, variant: Variant) -> StageInfo {
     let (name, max_hp, speed, turn, nitro_max, nitro_regen, magnet, radius, mass) = match (stage, variant) {
-        (0, _) => ("Wagon Keep", 100.0, 13.0, 2.6, 100.0, 12.0, 12.0, 3.2, 1.0),
+        (0, _) => ("Wagon Keep", 150.0, 13.0, 2.6, 100.0, 12.0, 12.0, 3.2, 1.0),
         (1, Variant::Movement) => ("Outrider Fort", 190.0, 17.0, 2.9, 140.0, 16.0, 15.0, 4.8, 1.6),
         (1, _) => ("Bulwark Fort", 260.0, 13.5, 2.3, 100.0, 12.0, 17.0, 4.8, 3.0),
         (_, Variant::Movement) => ("Thunder Citadel", 400.0, 20.0, 2.5, 180.0, 20.0, 19.0, 7.0, 3.0),
@@ -299,7 +299,7 @@ pub fn compute_stats(l: &Loadout) -> Stats {
         range: 1.0 + 0.20 * k(ArtifactKind::HawkEye),
         area: 1.0 + 0.30 * k(ArtifactKind::BlackPowder),
         ability_cd: 0.8f32.powf(k(ArtifactKind::TinkersKit)),
-        regen: 0.008 * k(ArtifactKind::Poultice),
+        regen: 0.003 + 0.008 * k(ArtifactKind::Poultice),
         xp_mult: 1.0 + 0.25 * k(ArtifactKind::GoldenFleece),
         spikes_dps: 20.0 * k(ArtifactKind::IronSpikes),
     }

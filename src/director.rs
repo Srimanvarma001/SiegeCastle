@@ -179,7 +179,7 @@ fn run_director(
             } else if minutes > 1.0 {
                 (12.0 + minutes * 5.0, vec![(EnemyKind::Footman, 0.75), (EnemyKind::Archer, 0.25)])
             } else {
-                (10.0 + minutes * 5.0, vec![(EnemyKind::Footman, 1.0)])
+                (8.0 + minutes * 6.0, vec![(EnemyKind::Footman, 1.0)])
             };
             let n = ((count * size) as usize).clamp(1, 80).min(budget);
             spawn_formation(&mut commands, &assets, &mut rng, center, facing, n, &mix, d.strength);

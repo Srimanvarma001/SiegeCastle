@@ -60,7 +60,7 @@ impl EnemyKind {
 
     pub fn stats(self) -> EnemyStats {
         let (hp, speed, radius, dps, coins) = match self {
-            EnemyKind::Footman => (12.0, 5.0, 0.55, 5.0, 1),
+            EnemyKind::Footman => (12.0, 5.0, 0.55, 4.0, 1),
             EnemyKind::Archer => (9.0, 5.2, 0.55, 3.0, 1),
             EnemyKind::Knight => (45.0, 9.5, 0.9, 8.0, 3),
             EnemyKind::Cart => (140.0, 6.5, 1.6, 14.0, 6),

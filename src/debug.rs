@@ -112,6 +112,7 @@ fn apply_speed(cfg: Res<DebugConfig>, mut time: ResMut<Time<Virtual>>) {
 fn autopilot(
     mut input: ResMut<DriveInput>,
     stats: Res<Stats>,
+    loadout: Res<Loadout>,
     mut rng: ResMut<GameRng>,
     castle: Query<(&Transform, &Castle)>,
     bosses: Query<&Transform, With<Boss>>,
@@ -135,7 +136,8 @@ fn autopilot(
         .min_by(|a, b| a.distance_squared(pos).total_cmp(&b.distance_squared(pos)));
     let (center, radius) = match boss {
         Some(b) => (b, 24.0),
-        None if n > 6.0 => (sum / n, 9.0),
+        // Ram through crowds when we have a ram, otherwise circle them.
+        None if n > 6.0 => (sum / n, if loadout.module(crate::items::ModuleKind::Ram).is_some() { 9.0 } else { 20.0 }),
         None => (Vec2::ZERO, 50.0),
     };
     let rel = pos - center;
