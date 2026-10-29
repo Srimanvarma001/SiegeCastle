@@ -65,7 +65,12 @@ bloom ~1.7 ms). The render thread is the limit; see PERF_NOTES.md.
 **Performance:** no problems in this branch's code; it is the performance
 branch. The render-thread cost is looked at in the final profiling pass.
 
-**Merge:** first merged as a fast-forward; the README fix merged cleanly.
+**Later fix:** clippy was installed during the enemy-visuals step and found
+two small things in this branch's code (an over-indented doc line in
+`debug.rs`, a manual `is_multiple_of` in `previews.rs`); fixed on the branch
+and merged again.
+
+**Merge:** first merged as a fast-forward; both follow-ups merged cleanly.
 
 ## 2. worktree-enemy-visuals
 
@@ -174,7 +179,47 @@ camera height). Kept the new projected framing, with its base height set to
 
 ## 4. graphics-polish
 
-Conflicts and decisions:
+**What it does:** new effects in `vfx.rs` (soft smoke, dust and fire sprites
+painted at startup, flash lights, shockwave rings, sparks, embers, muzzle
+blasts, shot trails, fading blood and scorch decals, wheel ruts), a new HUD
+(leather-and-bronze panels, glossy bars with a damage trail, cooldown sweep,
+level ring, rising cards, red flush when hit) and `anim.rs` (castle lean,
+squat and rock, wheels, flags, weapon aim and recoil, ballista reload, ram
+swing, troop and boss animation, corpses and wrecks).
+
+**Incomplete (from its TODO):** never played or screenshotted; one compiler
+warning (unused old effect materials); "turn effects down on Low" waiting
+for the graphics presets; README screenshots.
+
+**Review and test (on the branch):** builds; clippy only repeats the unused
+materials warning. Two runs (level 1 and level 10, with a boss and a card
+screen): no crash, 17-29 FPS on this branch (old shadows and SSAO still on).
+Screenshots showed:
+- the banner's drop shadow never faded, so "Defend the realm!" and "The Siege
+  Tower approaches!" stayed on screen as dark text;
+- the XP numbers were pale text on the pale gold fill and hard to read;
+- cards, bars, ability slots, smoke puffs and ruts looked right.
+
+**Finished / polished:**
+- On the branch: banner shadows fade with the text; XP numbers sit on a
+  small dark pill; unused materials removed (no warnings left); checklist
+  updated.
+- On `main` (needs the presets from smoother-play): effects scale with the
+  preset. High keeps 3200 effects / 10 flash lights / 160 bodies, Medium
+  2200 / 6 / 110, Low 1200 / 3 / 60 and also skips 40% of purely cosmetic
+  smoke and sparks. README preset table updated. Test: Low 49-58 FPS,
+  High 37-50 FPS with the Juggernaut on screen.
+
+**Performance:** the HUD only rewrites text when it changes, effects are
+capped, flashes have no shadows. The big cost of effects is overdraw from
+large see-through sprites, which the per-preset limits address. Its weapon
+animation is replaced by the weapons branch (section 5), so it was not tuned.
+
+**Second merge:** one conflict in `assets.rs`: the branch deleted `fire`,
+which `main` still needs for the bosses' fire pots, next to `main`'s
+`charred` (cart wrecks). Kept both.
+
+**First merge — conflicts and decisions:**
 
 - `combat.rs`: the effects code moved to `vfx.rs`. The bosses branch's new
   effects were ported there: `Zone` (red disc under a warning ring) and
