@@ -172,6 +172,7 @@ SIEGE_AUTOPILOT=1 SIEGE_LOG=1 SIEGE_SHOTS=30,120 SIEGE_EXIT_AFTER=150 cargo run 
 - `SIEGE_BOSS_IN=10`: first boss after this many seconds
 - `SIEGE_ENDLESS=1`: start in endless mode
 - `SIEGE_GALLERY=1`: spawn all five bosses at once
+- `SIEGE_TROOPS=1`: line up every troop look at several angles, save close-up, top and game-distance screenshots, then quit
 - `SIEGE_GOD=1`: castle cannot be destroyed
 - `SIEGE_LOWRES=1`: small window, for quick tests on machines without a GPU
 - `SIEGE_QUALITY=low|medium|high`: force a graphics preset
