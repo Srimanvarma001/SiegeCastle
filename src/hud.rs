@@ -232,7 +232,12 @@ fn spawn_hud(mut commands: Commands, icons: Res<Icons>) {
                                 children![gloss()],
                             ),
                             ticks(),
-                            (XpText, text("", 12.0, Color::srgba(1.0, 0.95, 0.85, 0.9)), shadow()),
+                            // On a dark pill, so the numbers read over the gold fill too.
+                            (
+                                Node { padding: UiRect::axes(Val::Px(7.0), Val::Px(0.0)), border_radius: round(7.0), ..default() },
+                                BackgroundColor(Color::srgba(0.05, 0.035, 0.02, 0.6)),
+                                children![(XpText, text("", 12.0, Color::srgba(1.0, 0.95, 0.85, 0.95)), shadow())],
+                            ),
                         ],
                     ),
                     (
