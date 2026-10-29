@@ -141,7 +141,7 @@ fn run_director(
     let e = d.endless_steps();
 
     // Strength grows slowly during the story, exponentially once endless.
-    let mut hp = 1.0 + 0.22 * minutes;
+    let mut hp = 1.0 + 0.18 * minutes;
     let mut dmg = 1.0 + 0.12 * minutes;
     let mut rate = 1.0;
     let mut size = 1.0;

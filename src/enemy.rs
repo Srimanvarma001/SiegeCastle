@@ -368,8 +368,8 @@ fn boss_ai(
             EnemyKind::SiegeTower => {
                 // Unloads a squad of footmen every few seconds.
                 if boss.timer <= 0.0 && dist < 60.0 {
-                    boss.timer = 7.0;
-                    for i in 0..8 {
+                    boss.timer = 8.0;
+                    for i in 0..6 {
                         let off = Vec2::new((i % 4) as f32 * 1.3 - 2.0, (i / 4) as f32 * 1.3 - 0.6);
                         let p = pos + dir * (en.radius + 2.0) + off;
                         spawn_enemy(&mut commands, &assets, EnemyKind::Footman, p, dir.to_angle(), Vec2::ZERO, director.strength);

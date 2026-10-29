@@ -44,7 +44,7 @@ impl Default for Progress {
 }
 
 pub fn xp_needed(level: u32) -> f32 {
-    20.0 + 13.0 * (level - 1) as f32 + 0.5 * ((level - 1) as f32).powi(2)
+    18.0 + 11.0 * (level - 1) as f32 + 0.35 * ((level - 1) as f32).powi(2)
 }
 
 impl Progress {
@@ -86,20 +86,27 @@ fn make_choice(level: u32, l: &Loadout, rng: &mut GameRng) -> Choice {
             level,
         };
     }
-    let mut modules: Vec<Offer> = Vec::new();
+    let mut new_mods: Vec<Offer> = Vec::new();
+    let mut upgrades: Vec<Offer> = Vec::new();
     for k in ModuleKind::ALL {
         match l.module(k) {
-            Some(m) if m.level < MAX_MODULE_LEVEL => modules.push(Offer::UpgradeModule(k, m.level + 1)),
-            None if l.modules.len() < l.max_slots() => modules.push(Offer::NewModule(k)),
+            Some(m) if m.level < MAX_MODULE_LEVEL => upgrades.push(Offer::UpgradeModule(k, m.level + 1)),
+            None if l.modules.len() < l.max_slots() => new_mods.push(Offer::NewModule(k)),
             _ => {}
         }
     }
+    new_mods.shuffle(&mut rng.0);
+    upgrades.shuffle(&mut rng.0);
+    // With a free slot, show at least two new weapons.
+    let mut modules: Vec<Offer> = new_mods.iter().take(2).copied().collect();
+    let mut rest: Vec<Offer> = new_mods.into_iter().skip(2).chain(upgrades).collect();
+    rest.shuffle(&mut rng.0);
+    modules.extend(rest);
     let mut artifacts: Vec<Offer> = ArtifactKind::ALL
         .iter()
         .filter(|&&a| l.stacks(a) < MAX_ARTIFACT_STACKS)
         .map(|&a| Offer::Artifact(a, l.stacks(a) + 1))
         .collect();
-    modules.shuffle(&mut rng.0);
     artifacts.shuffle(&mut rng.0);
 
     let module_turn = level % 2 == 0;
@@ -109,6 +116,7 @@ fn make_choice(level: u32, l: &Loadout, rng: &mut GameRng) -> Choice {
         (artifacts, modules, "Choose New Artifact!")
     };
     let mut offers: Vec<Offer> = first.into_iter().take(3).collect();
+    offers.shuffle(&mut rng.0);
     offers.extend(second.into_iter().take(3 - offers.len()));
     Choice { title: title.into(), offers, level }
 }
