@@ -6,7 +6,7 @@ Drive a castle on wheels across the countryside, plow through marching armies, a
 
 ![Gameplay](docs/gameplay.png)
 
-| Level-up cards | Grand Citadel vs. the Warlord |
+| Level-up cards | Iron Citadel vs. the Warlord |
 |---|---|
 | ![Cards](docs/cards.png) | ![Bosses](docs/bosses.png) |
 
