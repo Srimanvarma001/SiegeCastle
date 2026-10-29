@@ -31,9 +31,15 @@ Branch: `worktree-weapon-mounts`
 
 - Release build compiles with no warnings.
 - The first round of the new weapons was checked in-game (screenshots).
-- **The last round of changes was built but not yet looked at in-game:** the stone
-  wall platforms, new mount positions and facing, cannon braces, darker bronze tint,
-  the armory mode and the castle-relative close-up camera.
+- Looked at in-game on October 30, 2026 (Iris Xe): armory mode with the close-up
+  camera (bombard turns and elevates, all six weapons fire on a loop), all six
+  weapons on stages 1-3 from the front-right, and a level-up card screen. The wall
+  platforms, outward-facing side weapons, outside cannon platforms with braces and
+  the ram and chute all sit right; portraits frame each weapon. No crash.
+- Stage 3 with all weapons: 20-27 FPS on this branch, which still has the old
+  shadows (the GPU is the limit, so the weapons are not). Weapon parts now only
+  write their transform when it changes.
+- Clippy: two over-indented doc lines fixed; no other findings.
 
 ## How to look
 
@@ -71,21 +77,21 @@ cameras are gone (the normal follow camera has the same delay on `main`).
 ### Mounting, per castle stage (use `SIEGE_STAGE` + `SIEGE_LOADOUT`)
 - [ ] Stage 1: the keep-roof weapon is clear of the chimney and battlements.
 - [ ] Stage 1: the second top slot (deck behind the keep) is clear of both towers.
-- [ ] Stage 2 and 3: the new stone wall platforms look right (corbels, lip, inner
+- [x] Stage 2 and 3: the new stone wall platforms look right (corbels, lip, inner
       arch) and the weapons on them face outward.
 - [ ] Stage 2 and 3: the ballista arms don't cut into the hall roof eaves when it
       aims inward from a side-wall platform.
 - [ ] Stage 3: the front slot is clear of the two front round towers. The Archer
       Loft is the widest weapon, so check it there.
-- [ ] All stages: the cannon platforms sit outside the walls, the braces reach the
+- [x] All stages: the cannon platforms sit outside the walls, the braces reach the
       wall or deck, and nothing floats or cuts into the wheels.
-- [ ] Ram housing and mine chute sit flush against the front and back on every stage.
+- [x] Ram housing and mine chute sit flush against the front and back on every stage.
 
 ### Look and performance
-- [ ] Bronze looks like aged bronze, not flat yellow.
-- [ ] Card portraits (level-up cards, ability slots) frame each weapon well
+- [x] Bronze looks like aged bronze, not flat yellow.
+- [x] Card portraits (level-up cards, ability slots) frame each weapon well
       (`src/previews.rs`).
-- [ ] FPS with all weapons at stage 3: every moving part is its own entity now.
+- [x] FPS with all weapons at stage 3: every moving part is its own entity now.
 
 ### Merging into `main`
 - [ ] `main` has uncommitted DX12 / graphics changes that are not in this branch.

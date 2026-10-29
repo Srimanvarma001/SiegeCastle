@@ -17,9 +17,9 @@
 //! - `SIEGE_VARIANT=movement` growth path for stages 2 and 3 (`defense` or `movement`)
 //! - `SIEGE_LOADOUT=ballista,mortar,loft,ram,mines,cannons` start with these weapons
 //! - `SIEGE_CAM=0.3,40,35`   close-up camera: zoom, turn and tilt (degrees); turn 0 looks
-//!                           from behind the castle, 90 from its right, 180 from the front
+//!   from behind the castle, 90 from its right, 180 from the front
 //! - `SIEGE_ARMORY=1`        every weapon on the grass in front of the castle, firing on a
-//!                           loop (the close-up camera then looks at them)
+//!   loop (the close-up camera then looks at them)
 //!
 //! F12 always saves a screenshot.
 

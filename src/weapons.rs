@@ -215,6 +215,9 @@ fn animate(
     for (piece, mut tf) in &mut pieces {
         if let Ok((_, an)) = mounts.get(piece.owner)
             && let Some(p) = an.pose.get(piece.index)
+            // Only write when it moved: a written transform makes Bevy
+            // recompute the part and every mesh under it.
+            && *tf != *p
         {
             *tf = *p;
         }
