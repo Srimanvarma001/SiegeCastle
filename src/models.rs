@@ -6,7 +6,6 @@
 //! one vertex-colored material so thousands of them stay cheap to draw.
 
 use crate::art::{castle_mounts, rgb, Variant};
-use crate::items::ModuleKind;
 use crate::texgen::Surface;
 use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -108,22 +107,12 @@ pub struct Model {
     pub rig: Vec<RigPart>,
 }
 
-/// How a moving piece moves. See `anim.rs`.
+/// How a moving piece of the castle moves. See `anim.rs` (weapons have
+/// their own rigs in `weapon_models.rs`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Role {
     /// Rolls with the ground speed; axle along local Z.
     Wheel { r: f32 },
-    /// Turns toward the target and kicks back along local -X when firing.
-    Turret,
-    /// A barrel that slides back along `axis` when it fires. `muzzle` is the
-    /// barrel tip, relative to the pivot.
-    Recoil { axis: Vec3, dist: f32, muzzle: Vec3 },
-    /// One of the loft archers: turns toward the target, leans into the shot.
-    Archer,
-    /// The shot waiting in a weapon. Hidden right after firing, then reloaded.
-    Ammo,
-    /// Ram log hanging on chains, swings about local Z.
-    Swing,
     /// Cloth that waves in the wind.
     Flag,
 }
@@ -220,6 +209,119 @@ impl Model {
 
     pub fn boxy(&mut self, mat: Mat, size: Vec3, center: Vec3, color: Color) {
         self.cube(mat, size, center, Quat::IDENTITY, color);
+    }
+
+    /// Box with chamfered edges, so its edges catch the light like real
+    /// sawn timber or forged iron. Texture runs along each face's long side.
+    pub fn bevel(&mut self, mat: Mat, size: Vec3, center: Vec3, rot: Quat, b: f32, color: Color) {
+        let h = size / 2.0;
+        let b = b.min(h.min_element() * 0.45).max(0.0);
+        let hi = h - Vec3::splat(b);
+        let axis = |i: usize| Vec3::AXES[i];
+        let tf = |p: Vec3| center + rot * p;
+        // Faces.
+        for a in 0..3 {
+            let (u, v) = ((a + 1) % 3, (a + 2) % 3);
+            let (u, v) = if hi[u] >= hi[v] { (u, v) } else { (v, u) };
+            for s in [-1.0f32, 1.0] {
+                let n = axis(a) * s;
+                let corners = [(-1.0f32, -1.0f32), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
+                let pts: Vec<Vec3> = corners.iter().map(|(cu, cv)| tf(n * h[a] + axis(u) * cu * hi[u] + axis(v) * cv * hi[v])).collect();
+                let uvs: Vec<Vec2> = corners.iter().map(|(cu, cv)| Vec2::new((cu + 1.0) * hi[u] + s * a as f32, (cv + 1.0) * hi[v])).collect();
+                self.poly(mat, color, &pts, &uvs, rot * n);
+            }
+        }
+        if b <= 0.0 {
+            return;
+        }
+        // Edge chamfers.
+        for a in 0..3 {
+            let c = (a + 1) % 3;
+            let o = (a + 2) % 3;
+            for sa in [-1.0f32, 1.0] {
+                for sc in [-1.0f32, 1.0] {
+                    let p1 = axis(a) * sa * h[a] + axis(c) * sc * hi[c];
+                    let p2 = axis(a) * sa * hi[a] + axis(c) * sc * h[c];
+                    let e = axis(o) * hi[o];
+                    let pts = [tf(p1 - e), tf(p1 + e), tf(p2 + e), tf(p2 - e)];
+                    let w = b * std::f32::consts::SQRT_2;
+                    let uvs = [Vec2::new(0.0, 0.0), Vec2::new(2.0 * hi[o], 0.0), Vec2::new(2.0 * hi[o], w), Vec2::new(0.0, w)];
+                    self.poly(mat, color, &pts, &uvs, rot * (axis(a) * sa + axis(c) * sc));
+                }
+            }
+        }
+        // Corner facets.
+        for sx in [-1.0f32, 1.0] {
+            for sy in [-1.0f32, 1.0] {
+                for sz in [-1.0f32, 1.0] {
+                    let s = Vec3::new(sx, sy, sz);
+                    let pts = [
+                        tf(s * Vec3::new(h.x, hi.y, hi.z)),
+                        tf(s * Vec3::new(hi.x, h.y, hi.z)),
+                        tf(s * Vec3::new(hi.x, hi.y, h.z)),
+                    ];
+                    self.poly(mat, color, &pts, &[Vec2::ZERO, Vec2::new(b, 0.0), Vec2::new(0.0, b)], rot * s);
+                }
+            }
+        }
+    }
+
+    /// Axis-aligned chamfered box.
+    pub fn bev(&mut self, mat: Mat, size: Vec3, center: Vec3, b: f32, color: Color) {
+        self.bevel(mat, size, center, Quat::IDENTITY, b, color);
+    }
+
+    /// Turned shape (barrels, rings, posts): `profile` is (height, radius)
+    /// pairs along local Y, from `base`. Each band gets its own normals, so
+    /// steps in the profile read as crisp moldings.
+    pub fn lathe(&mut self, mat: Mat, base: Vec3, rot: Quat, profile: &[(f32, f32)], seg: u32, color: Color) {
+        let c = lin(color);
+        let part = self.part(mat);
+        let mut v = 0.0;
+        for w in profile.windows(2) {
+            let ((y0, r0), (y1, r1)) = (w[0], w[1]);
+            let (dy, dr) = (y1 - y0, r1 - r0);
+            let len = Vec2::new(dy, dr).length();
+            if len < 1e-5 {
+                continue;
+            }
+            let start = part.pos.len() as u32;
+            let avg = (r0 + r1).abs() / 2.0;
+            for i in 0..=seg {
+                let a = i as f32 / seg as f32 * TAU;
+                let (ca, sa) = (a.cos(), a.sin());
+                let n = rot * Vec3::new(ca * dy, -dr, sa * dy).normalize_or(Vec3::Y);
+                let u = a * avg.max(0.05);
+                part.vert(base + rot * Vec3::new(ca * r0, y0, sa * r0), n, Vec2::new(u, v), c);
+                part.vert(base + rot * Vec3::new(ca * r1, y1, sa * r1), n, Vec2::new(u, v + len), c);
+            }
+            v += len;
+            for i in 0..seg {
+                let (b0, t0, b1, t1) = (start + i * 2, start + i * 2 + 1, start + i * 2 + 2, start + i * 2 + 3);
+                part.idx.extend_from_slice(&[b0, t0, t1, b0, t1, b1]);
+            }
+        }
+    }
+
+    /// Round rod from `a` to `b`, tapering from `ra` to `rb`.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rod(&mut self, mat: Mat, a: Vec3, b: Vec3, ra: f32, rb: f32, seg: u32, color: Color, cap: bool) {
+        let d = b - a;
+        let len = d.length();
+        if len < 1e-5 {
+            return;
+        }
+        let rot = Quat::from_rotation_arc(Vec3::Y, d / len);
+        self.frustum_rot(mat, a, rot, ra, rb, len, seg, color, true, cap);
+        if cap {
+            self.frustum_rot(mat, a, rot * Quat::from_rotation_x(std::f32::consts::PI), ra, ra, 0.0001, seg, color, true, true);
+        }
+    }
+
+    /// Round-headed rivet or bolt head, domed outward along `n`.
+    pub fn rivet(&mut self, mat: Mat, at: Vec3, n: Vec3, r: f32, color: Color) {
+        let rot = Quat::from_rotation_arc(Vec3::Y, n.normalize_or(Vec3::Y));
+        self.lathe(mat, at, rot, &[(-0.002, r), (r * 0.35, r * 0.92), (r * 0.62, r * 0.6), (r * 0.72, 0.0)], 8, color);
     }
 
     /// Cone/cylinder/frustum standing on `base`, along `rot * Y`.
@@ -856,6 +958,12 @@ pub fn castle(stage: usize, variant: Variant) -> Model {
             m.boxy(Mat::Stone, Vec3::new(0.5, 3.2, 0.5), Vec3::new(-1.9, top + 4.4 + 1.6, 1.1), sh(stone_tint(), 0.9));
         }
     }
+    // Stone gun platforms on the side walls, for the weapons mounted there.
+    match stage {
+        1 => wall_platforms(&mut m, -0.6, 3.75, 3.0, 1.74, 3.075, 3.95),
+        2 => wall_platforms(&mut m, 0.0, 4.85, 3.7, 2.04, 4.525, 4.95),
+        _ => {}
+    }
     match (stage, variant) {
         (s, Variant::Defense) if s > 0 => {
             // Iron plating and spikes along the chassis.
@@ -877,6 +985,36 @@ pub fn castle(stage: usize, variant: Variant) -> Model {
         _ => {}
     }
     m
+}
+
+/// Stone platforms on both side walls (mirrored in Z). Each bridges from the
+/// hall's buttresses (`z_in`) over the curtain wall (outer face `z_wall`) and
+/// juts out to `z_out` on stepped corbels. `top` is the floor height.
+fn wall_platforms(m: &mut Model, x: f32, top: f32, len: f32, z_in: f32, z_wall: f32, z_out: f32) {
+    let st = stone_tint();
+    for s in [-1.0f32, 1.0] {
+        let zc = s * (z_in + z_out) / 2.0;
+        let depth = z_out - z_in;
+        m.boxy(Mat::Stone, Vec3::new(len, 0.32, depth), Vec3::new(x, top - 0.16, zc), st);
+        // Moulded lip around the slab.
+        m.boxy(Mat::Stone, Vec3::new(len + 0.12, 0.1, 0.12), Vec3::new(x, top - 0.27, s * (z_out + 0.0)), sh(st, 0.85));
+        for e in [-1.0f32, 1.0] {
+            m.boxy(Mat::Stone, Vec3::new(0.12, 0.1, depth), Vec3::new(x + e * (len / 2.0 + 0.0), top - 0.27, zc), sh(st, 0.85));
+        }
+        // Stepped corbels carrying the overhang.
+        let over = z_out - z_wall;
+        let n = ((len / 0.75).round() as i32).max(2);
+        for i in 0..n {
+            let cx = x - len / 2.0 + 0.3 + i as f32 * (len - 0.6) / (n - 1) as f32;
+            for (k, frac) in [0.35f32, 0.68, 1.0].iter().enumerate() {
+                let d = over * frac;
+                let y = top - 0.32 - 0.2 * (3 - k) as f32 + 0.1;
+                m.boxy(Mat::Stone, Vec3::new(0.32, 0.2, d), Vec3::new(cx, y, s * (z_wall + d / 2.0)), sh(st, 0.9 + 0.03 * k as f32));
+            }
+        }
+        // Arch under the inner edge, where it spans the courtyard.
+        m.boxy(Mat::Stone, Vec3::new(len, 0.5, 0.3), Vec3::new(x, top - 0.55, s * (z_in + 0.15)), sh(st, 0.92));
+    }
 }
 
 /// Spoked wooden wheel with an iron tire; axle along Z.
@@ -929,224 +1067,6 @@ pub(crate) fn archer_figure(m: &mut Model, tunic: Color, hood: Color) {
     }
     m.frustum_rot(p, draw_hand, Quat::from_rotation_arc(Vec3::Y, (bow_hand - draw_hand).normalize()), 0.012, 0.012, 0.9, 4, rgb(0.6, 0.5, 0.35), true, false);
     m.frustum_rot(p, Vec3::new(-0.22, 0.75, 0.1), Quat::from_rotation_x(0.25), 0.08, 0.09, 0.6, 7, leather(), true, true);
-}
-
-pub fn module(kind: ModuleKind) -> Model {
-    let mut m = Model::new();
-    match kind {
-        ModuleKind::ArrowLoft => {
-            // Covered wooden hoarding with archers drawing longbows.
-            m.boxy(Mat::Wood, Vec3::new(2.2, 0.2, 2.2), Vec3::new(0.0, 0.1, 0.0), W);
-            for (x, z) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-                m.boxy(Mat::Wood, Vec3::new(0.16, 1.9, 0.16), Vec3::new(x, 1.05, z), sh(timber(), 1.0));
-            }
-            for (side, axis) in [(1.0f32, true), (-1.0, false), (1.0, false)] {
-                for k in 0..7 {
-                    let t = -0.9 + k as f32 * 0.3;
-                    let h = if k % 2 == 0 { 0.75 } else { 0.5 };
-                    let (pos, size) = if axis {
-                        (Vec3::new(1.05 * side, 0.2 + h / 2.0, t), Vec3::new(0.06, h, 0.26))
-                    } else {
-                        (Vec3::new(t, 0.2 + h / 2.0, 1.05 * side), Vec3::new(0.26, h, 0.06))
-                    };
-                    m.boxy(Mat::Wood, size, pos, W);
-                }
-            }
-            m.roof(Vec3::new(0.0, 1.95, 0.0), Quat::IDENTITY, 2.4, 2.4, 1.0, 0.15, slate_tint(), Mat::Wood, W, Mat::Slate);
-            // Quivers and a bundle of spare arrows along the back rail.
-            for z in [-0.6f32, 0.6] {
-                m.frustum_rot(Mat::Paint, Vec3::new(-0.9, 0.2, z), Quat::from_rotation_z(0.15), 0.09, 0.11, 0.55, 8, leather(), true, true);
-                for k in 0..4 {
-                    let off = Vec3::new(0.0, 0.0, (k as f32 - 1.5) * 0.035);
-                    m.frustum_rot(Mat::Paint, Vec3::new(-0.88, 0.6, z) + off, Quat::from_rotation_z(0.15), 0.012, 0.012, 0.3, 4, rgb(0.62, 0.50, 0.34), true, false);
-                    m.cube(Mat::Paint, Vec3::new(0.02, 0.1, 0.05), Vec3::new(-0.91, 0.85, z) + off, Quat::IDENTITY, rgb(0.85, 0.85, 0.82));
-                }
-            }
-            for (x, z, a) in [(0.35, -0.55, 0.15), (0.45, 0.5, -0.2), (-0.45, 0.0, 0.0)] {
-                let pivot = Vec3::new(x, 0.2, z);
-                m.rig_rest(Role::Archer, pivot, Quat::from_rotation_y(a), |p| {
-                    let mut fig = Model::new();
-                    archer_figure(&mut fig, rgb(0.14, 0.24, 0.44), rgb(0.16, 0.18, 0.26));
-                    p.append(fig, Transform::from_translation(pivot).with_scale(Vec3::splat(0.9)));
-                });
-            }
-        }
-        ModuleKind::Mortar => {
-            // Squat bronze bombard on a heavy timber bed, with spare shot.
-            // The whole bed turns toward the target; the barrel kicks down
-            // into its cradle when it fires.
-            m.frustum(Mat::Iron, Vec3::ZERO, 0.95, 0.92, 0.06, 18, sh(W, 0.8), true);
-            m.rig(Role::Turret, Vec3::Y * 0.06, |t| {
-                t.boxy(Mat::Wood, Vec3::new(1.7, 0.35, 1.3), Vec3::new(0.0, 0.18, 0.0), W);
-                for x in [-0.6, 0.0, 0.6] {
-                    t.boxy(Mat::Iron, Vec3::new(0.1, 0.37, 1.32), Vec3::new(x, 0.18, 0.0), W);
-                }
-                for z in [-0.42f32, 0.42] {
-                    t.boxy(Mat::Wood, Vec3::new(0.9, 0.55, 0.14), Vec3::new(-0.1, 0.62, z), W);
-                    for x in [-0.4, 0.2] {
-                        t.blob(Mat::Iron, Vec3::new(x, 0.8, z * 1.18), 0.035, Vec3::ONE, W, 0.0, 1, 1);
-                    }
-                }
-                let rot = Quat::from_rotation_z(-0.5);
-                let base = Vec3::new(-0.25, 0.55, 0.0);
-                t.frustum_rot(Mat::Bronze, base + Vec3::new(0.0, 0.0, -0.5), Quat::from_rotation_x(FRAC_PI_2), 0.07, 0.07, 1.0, 8, W, true, true);
-                t.rig(Role::Recoil { axis: rot * -Vec3::Y, dist: 0.2, muzzle: rot * Vec3::Y * 1.0 }, base, |b| {
-                    b.blob(Mat::Bronze, base, 0.36, Vec3::new(1.0, 0.9, 1.0), W, 0.0, 1, 2);
-                    b.frustum_rot(Mat::Bronze, base, rot, 0.36, 0.31, 0.95, 20, W, true, false);
-                    for (tt, r) in [(0.1, 0.39), (0.5, 0.36), (0.88, 0.37)] {
-                        b.frustum_rot(Mat::Bronze, base + rot * Vec3::Y * tt, rot, r, r, 0.08, 20, sh(W, 0.85), true, false);
-                    }
-                    b.frustum_rot(Mat::Bronze, base + rot * Vec3::Y * 0.95, rot, 0.36, 0.36, 0.05, 20, W, true, false);
-                    b.frustum_rot(Mat::Paint, base + rot * Vec3::Y * 0.97, rot, 0.25, 0.25, 0.01, 16, rgb(0.02, 0.02, 0.02), true, true);
-                });
-                for (x, z) in [(0.55, 0.4), (0.7, 0.15), (0.6, -0.15)] {
-                    t.blob(Mat::Iron, Vec3::new(x, 0.47, z), 0.13, Vec3::ONE, W, 0.0, 1, 2);
-                }
-                // Powder keg and rammer.
-                t.frustum(Mat::Wood, Vec3::new(0.62, 0.35, -0.45), 0.16, 0.18, 0.32, 12, W, true);
-                for y in [0.4, 0.6] {
-                    t.frustum(Mat::Iron, Vec3::new(0.62, y, -0.45), 0.185, 0.185, 0.03, 12, W, true);
-                }
-                t.frustum_rot(Mat::Wood, Vec3::new(-0.75, 0.38, 0.55), Quat::from_rotation_z(-FRAC_PI_2), 0.025, 0.025, 1.3, 5, W, true, false);
-            });
-        }
-        ModuleKind::Ram => {
-            // Covered battering ram: iron-headed log hung on chains.
-            for (x, z) in [(-0.6, -0.55), (-0.6, 0.55), (1.0, -0.55), (1.0, 0.55)] {
-                m.boxy(Mat::Wood, Vec3::new(0.15, 1.3, 0.15), Vec3::new(x, 0.65, z), W);
-            }
-            m.boxy(Mat::Wood, Vec3::new(1.8, 0.12, 0.15), Vec3::new(0.2, 1.3, 0.0), W);
-            m.roof(Vec3::new(0.2, 1.32, 0.0), Quat::IDENTITY, 1.9, 1.3, 0.55, 0.1, rgb(0.55, 0.42, 0.3), Mat::Wood, W, Mat::Wood);
-            // The log hangs on chains and swings forward to strike.
-            m.rig(Role::Swing, Vec3::new(0.3, 1.3, 0.0), |r| {
-                let axis = Quat::from_rotation_z(-FRAC_PI_2);
-                r.frustum_rot(Mat::Bark, Vec3::new(-0.7, 0.62, 0.0), axis, 0.22, 0.2, 2.2, 10, W, true, true);
-                for x in [-0.4, 0.4, 1.1] {
-                    r.frustum_rot(Mat::Iron, Vec3::new(x, 0.62, 0.0), axis, 0.24, 0.24, 0.08, 10, W, true, false);
-                }
-                // Ram's-head iron cap with curled horns.
-                r.frustum_rot(Mat::Iron, Vec3::new(1.5, 0.62, 0.0), axis, 0.3, 0.26, 0.35, 10, W, true, true);
-                r.frustum_rot(Mat::Iron, Vec3::new(1.85, 0.62, 0.0), axis, 0.24, 0.0, 0.35, 8, W, false, false);
-                for s in [-1.0f32, 1.0] {
-                    for k in 0..5 {
-                        let a = k as f32 * 0.9;
-                        let p = Vec3::new(1.55 - a.sin() * 0.12, 0.72 + a.cos() * 0.14, s * (0.28 + k as f32 * 0.025));
-                        r.blob(Mat::Iron, p, 0.07 - k as f32 * 0.006, Vec3::ONE, sh(W, 0.8), 0.0, 1, 1);
-                    }
-                }
-                for x in [-0.2, 0.8] {
-                    for k in 0..5 {
-                        let y = 1.25 - k as f32 * 0.13;
-                        r.cube(Mat::Iron, Vec3::new(0.05, 0.12, 0.03), Vec3::new(x, y, 0.0), Quat::from_rotation_y(k as f32 * FRAC_PI_2), W);
-                    }
-                }
-            });
-        }
-        ModuleKind::MineLayer => {
-            // The hopper barrel jolts each time it drops a mine.
-            m.rig(Role::Recoil { axis: Vec3::X, dist: 0.12, muzzle: Vec3::new(-1.5, -0.3, 0.0) }, Vec3::new(0.0, 0.75, 0.0), |b| {
-                b.frustum_rot(Mat::Wood, Vec3::new(0.5, 0.75, 0.0), Quat::from_rotation_z(FRAC_PI_2), 0.5, 0.56, 1.1, 16, W, true, true);
-                for x in [0.35, -0.05, -0.45] {
-                    b.frustum_rot(Mat::Iron, Vec3::new(x + 0.03, 0.75, 0.0), Quat::from_rotation_z(FRAC_PI_2), 0.58, 0.58, 0.06, 16, W, true, false);
-                }
-                // Skull-and-powder warning daub on the barrel end.
-                b.frustum_rot(Mat::Paint, Vec3::new(-0.62, 0.75, 0.0), Quat::from_rotation_z(FRAC_PI_2), 0.3, 0.3, 0.01, 12, rgb(0.75, 0.12, 0.06), true, true);
-            });
-            m.cube(Mat::Wood, Vec3::new(1.1, 0.08, 0.7), Vec3::new(-1.0, 0.4, 0.0), Quat::from_rotation_z(0.35), W);
-            for z in [-0.36f32, 0.36] {
-                m.cube(Mat::Wood, Vec3::new(1.1, 0.2, 0.05), Vec3::new(-1.0, 0.48, z), Quat::from_rotation_z(0.35), W);
-            }
-            for (x, z) in [(-0.9, 0.0), (-1.35, 0.15)] {
-                m.blob(Mat::Iron, Vec3::new(x, 0.6 - (x + 0.9).abs() * 0.3, z), 0.17, Vec3::ONE, W, 0.0, 1, 2);
-            }
-        }
-        ModuleKind::Broadside => {
-            // Bronze cannon on a wooden carriage, facing +Z (mounted on both sides).
-            for x in [-0.27f32, 0.27] {
-                m.cube(Mat::Wood, Vec3::new(0.11, 0.5, 1.5), Vec3::new(x, 0.42, -0.25), Quat::from_rotation_x(0.12), W);
-            }
-            m.boxy(Mat::Wood, Vec3::new(0.6, 0.18, 0.3), Vec3::new(0.0, 0.3, -0.75), W);
-            m.frustum_rot(Mat::Iron, Vec3::new(-0.62, 0.36, 0.25), Quat::from_rotation_z(-FRAC_PI_2), 0.05, 0.05, 1.24, 6, W, true, false);
-            for x in [-0.5f32, 0.5] {
-                let mut wheel = Model::new();
-                spoked_wheel(&mut wheel, Vec3::ZERO, 0.36, 0.09);
-                m.append(wheel, Transform::from_xyz(x, 0.36, 0.25).with_rotation(Quat::from_rotation_y(FRAC_PI_2)));
-            }
-            let axis = Quat::from_rotation_x(FRAC_PI_2);
-            let breech = Vec3::new(0.0, 0.72, -0.6);
-            // Shot pile and a bucket by the carriage.
-            for (x, z) in [(0.45, -0.85), (0.6, -0.7), (0.52, -0.62)] {
-                m.blob(Mat::Iron, Vec3::new(x, 0.12, z), 0.12, Vec3::ONE, sh(W, 0.6), 0.0, 1, 2);
-            }
-            m.rig(Role::Recoil { axis: -Vec3::Z, dist: 0.4, muzzle: Vec3::Z * 1.98 }, breech, |b| {
-                b.frustum_rot(Mat::Bronze, breech, axis, 0.25, 0.17, 1.9, 20, W, true, false);
-                for (t, r) in [(0.0, 0.27), (0.45, 0.24), (1.0, 0.22), (1.78, 0.2)] {
-                    b.frustum_rot(Mat::Bronze, breech + Vec3::Z * t, axis, r, r, 0.09, 20, sh(W, 0.9), true, false);
-                }
-                b.frustum_rot(Mat::Bronze, breech + Vec3::Z * 1.9, axis, 0.2, 0.2, 0.06, 20, W, true, true);
-                b.frustum_rot(Mat::Paint, breech + Vec3::Z * 1.965, axis, 0.1, 0.1, 0.005, 12, rgb(0.02, 0.02, 0.02), true, true);
-                b.blob(Mat::Bronze, breech - Vec3::Z * 0.12, 0.09, Vec3::ONE, W, 0.0, 1, 2);
-                b.frustum_rot(Mat::Bronze, breech + Vec3::new(-0.33, 0.0, 0.55), Quat::from_rotation_z(-FRAC_PI_2), 0.06, 0.06, 0.66, 8, W, true, true);
-                // Lifting dolphins on top of the barrel.
-                for s in [-1.0f32, 1.0] {
-                    b.cube(Mat::Bronze, Vec3::new(0.05, 0.1, 0.22), breech + Vec3::new(s * 0.08, 0.25, 0.75), Quat::IDENTITY, W);
-                }
-            });
-        }
-        ModuleKind::Ballista => {
-            // Giant torsion crossbow on a turntable, facing +X.
-            m.frustum(Mat::Wood, Vec3::ZERO, 0.65, 0.6, 0.22, 16, W, true);
-            m.frustum(Mat::Iron, Vec3::Y * 0.22, 0.62, 0.62, 0.04, 16, W, true);
-            // Everything above the turntable swings round to aim.
-            m.rig(Role::Turret, Vec3::Y * 0.26, |t| {
-                t.frustum(Mat::Wood, Vec3::Y * 0.26, 0.16, 0.13, 0.45, 8, W, true);
-                let tilt = Quat::from_rotation_z(0.08);
-                t.cube(Mat::Wood, Vec3::new(2.5, 0.16, 0.3), Vec3::new(0.0, 0.8, 0.0), tilt, W);
-                t.cube(Mat::Wood, Vec3::new(0.35, 0.65, 0.6), Vec3::new(0.75, 0.86, 0.0), tilt, W);
-                // Bolt groove.
-                t.cube(Mat::Iron, Vec3::new(2.3, 0.02, 0.08), Vec3::new(-0.05, 0.885, 0.0), tilt, sh(W, 0.7));
-                for z in [-0.22f32, 0.22] {
-                    t.frustum(Mat::Paint, Vec3::new(0.75, 0.55, z), 0.09, 0.09, 0.65, 8, rgb(0.45, 0.35, 0.22), true);
-                    for y in [0.58, 1.17] {
-                        t.frustum(Mat::Iron, Vec3::new(0.75, y, z), 0.11, 0.11, 0.05, 8, W, true);
-                    }
-                }
-                let mut tips = Vec::new();
-                for s in [-1.0f32, 1.0] {
-                    let root = Vec3::new(0.8, 0.88, s * 0.24);
-                    let dir = Vec3::new(-0.38, 0.03, s).normalize();
-                    t.frustum_rot(Mat::Wood, root, Quat::from_rotation_arc(Vec3::Y, dir), 0.07, 0.04, 1.05, 7, W, true, false);
-                    let tip = root + dir * 1.05;
-                    t.blob(Mat::Iron, tip, 0.05, Vec3::ONE, W, 0.0, 1, 1);
-                    tips.push(tip);
-                }
-                let nock = Vec3::new(-0.45, 0.93, 0.0);
-                for tip in tips {
-                    let d = nock - tip;
-                    t.frustum_rot(Mat::Paint, tip, Quat::from_rotation_arc(Vec3::Y, d.normalize()), 0.012, 0.012, d.length(), 3, rgb(0.82, 0.78, 0.66), true, false);
-                }
-                // The loaded bolt: gone the moment it fires, then winched back in.
-                t.rig(Role::Ammo, Vec3::new(-0.45, 0.95, 0.0), |b| {
-                    let bolt = Quat::from_rotation_z(-FRAC_PI_2 + 0.08);
-                    b.frustum_rot(Mat::Wood, Vec3::new(-0.45, 0.95, 0.0), bolt, 0.035, 0.035, 1.9, 6, rgb(0.8, 0.7, 0.55), true, false);
-                    b.frustum_rot(Mat::Iron, Vec3::new(1.44, 1.1, 0.0), bolt, 0.07, 0.0, 0.25, 4, W, false, false);
-                    for s in [-1.0f32, 1.0] {
-                        b.card(Mat::Cloth, Vec3::new(-0.3, 0.97, 0.0), Vec3::X * 0.14, Vec3::new(0.0, 0.05, s * 0.08), Vec2::ZERO, Vec2::ONE, rgb(0.85, 0.83, 0.78), None);
-                    }
-                });
-                t.frustum_rot(Mat::Wood, Vec3::new(-1.1, 0.78, -0.32), Quat::from_rotation_x(FRAC_PI_2), 0.09, 0.09, 0.64, 10, W, true, true);
-                for z in [-0.36f32, 0.36] {
-                    t.cube(Mat::Iron, Vec3::new(0.04, 0.3, 0.04), Vec3::new(-1.1, 0.88, z), Quat::from_rotation_x(0.6), W);
-                }
-                // Spare bolts racked along the side.
-                for k in 0..3 {
-                    let z = -0.42 - k as f32 * 0.06;
-                    t.frustum_rot(Mat::Wood, Vec3::new(-0.9, 0.55, z), Quat::from_rotation_z(-FRAC_PI_2), 0.025, 0.025, 1.3, 5, rgb(0.8, 0.7, 0.55), true, false);
-                }
-            });
-        }
-    }
-    m
 }
 
 /// Small 3D still-life for each artifact card.

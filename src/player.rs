@@ -8,6 +8,7 @@ use crate::combat::{damage_area, explosion, spawn_fx, spawn_fx_rot, FxKind};
 use crate::enemy::Enemy;
 use crate::grid::Grid;
 use crate::items::{compute_stats, stage_info, Loadout, ModuleKind, Mount, Stats};
+use crate::weapons::{spawn_rig, WeaponAnim};
 use crate::{Banner, GameEntity, GameRng, GameState, MAP_HALF, Shake, Sim};
 use bevy::prelude::*;
 use std::collections::VecDeque;
@@ -63,11 +64,6 @@ pub struct CastlePart;
 /// A mounted weapon model; its world position is where shots come from.
 #[derive(Component)]
 pub struct ModuleMount(pub ModuleKind);
-
-/// Every mounted weapon model, including the mirrored side cannons
-/// (used for animation; `ModuleMount` is only on the one that shoots).
-#[derive(Component)]
-pub struct MountOf(pub ModuleKind);
 
 /// Holds everything above the wheels, so the body can lean and bounce.
 #[derive(Component)]
@@ -265,41 +261,48 @@ fn rebuild_castle(
     let mounts = castle_mounts(loadout.stage);
     let scale = 1.0 + loadout.stage as f32 * 0.25;
     let rig = assets.castle_rigs[&(loadout.stage, variant)].clone();
-    let modules = assets.module_rigs.clone();
+    let rigs = assets.rigs.clone();
     let owned = loadout.modules.clone();
     let is_wheel = |r: Role| matches!(r, Role::Wheel { .. });
     commands.entity(e).despawn_related::<Children>().with_children(|p| {
-        // Wheels stay on the ground; the body above them sways.
-        spawn_pieces(p, &rig.parts, e, is_wheel);
+        // Wheels stay on the ground; the body above them sways, weapons and all.
+        spawn_pieces(p, &rig.parts, is_wheel);
         p.spawn((CastlePart, CastleBody, Transform::IDENTITY, Visibility::Inherited)).with_children(|b| {
             rig.body.spawn_parts(b, CastlePart);
-            spawn_pieces(b, &rig.parts, e, |r| !is_wheel(r));
-            let mut tops = mounts.top.iter();
+            spawn_pieces(b, &rig.parts, |r| !is_wheel(r));
+            let mut tops = 0;
             for m in &owned {
-                let at = match m.kind.mount() {
-                    Mount::Top => *tops.next().unwrap_or(&mounts.top[0]),
-                    Mount::Front => mounts.front,
-                    Mount::Back => mounts.back,
-                    Mount::Side => mounts.side,
+                let (at, turn) = match m.kind.mount() {
+                    Mount::Top => {
+                        let i = if tops < mounts.top.len() { tops } else { 0 };
+                        tops += 1;
+                        (mounts.top[i], mounts.top_yaw[i])
+                    }
+                    Mount::Front => (mounts.front, 0.0),
+                    Mount::Back => (mounts.back, 0.0),
+                    Mount::Side => (mounts.side, 0.0),
                 };
-                let model = modules[&m.kind].clone();
-                let place = Transform::from_translation(at).with_scale(Vec3::splat(scale));
-                b.spawn((CastlePart, ModuleMount(m.kind), MountOf(m.kind), place, Visibility::Inherited)).with_children(|q| {
-                    model.body.spawn_parts(q, ());
-                    let owner = q.target_entity();
-                    spawn_pieces(q, &model.parts, owner, |_| true);
-                });
+                let gun_rig = &rigs[&m.kind];
+                let mut gun = b.spawn((
+                    CastlePart,
+                    ModuleMount(m.kind),
+                    WeaponAnim::new(m.kind, 1.0, gun_rig).facing(turn),
+                    Transform::from_translation(at).with_rotation(Quat::from_rotation_y(turn)).with_scale(Vec3::splat(scale)),
+                    Visibility::Inherited,
+                ));
+                let owner = gun.id();
+                gun.with_children(|q| spawn_rig(q, gun_rig, owner));
                 if m.kind.mount() == Mount::Side {
                     // Guns on the other side too, facing out.
                     let mirror = Vec3::new(at.x, at.y, -at.z);
-                    let place = Transform::from_translation(mirror)
-                        .with_rotation(Quat::from_rotation_y(std::f32::consts::PI))
-                        .with_scale(Vec3::splat(scale));
-                    b.spawn((CastlePart, MountOf(m.kind), place, Visibility::Inherited)).with_children(|q| {
-                        model.body.spawn_parts(q, ());
-                        let owner = q.target_entity();
-                        spawn_pieces(q, &model.parts, owner, |_| true);
-                    });
+                    let mut gun = b.spawn((
+                        CastlePart,
+                        WeaponAnim::new(m.kind, -1.0, gun_rig),
+                        Transform::from_translation(mirror).with_rotation(Quat::from_rotation_y(std::f32::consts::PI)).with_scale(Vec3::splat(scale)),
+                        Visibility::Inherited,
+                    ));
+                    let owner = gun.id();
+                    gun.with_children(|q| spawn_rig(q, gun_rig, owner));
                 }
             }
         });

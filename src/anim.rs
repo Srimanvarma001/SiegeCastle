@@ -1,23 +1,19 @@
-//! Movement and body language of the castle and its weapons.
+//! Movement and body language of the castle.
 //!
-//! Wheels roll, weapons swing round to aim and kick back when they fire, the
-//! castle leans into turns and rocks when hit, and shots leave trails.
-//! Troops are animated in `enemy.rs` and bosses in `boss.rs`.
+//! Wheels roll, flags wave, the castle leans into turns, squats when it
+//! speeds up and rocks when hit, and shots leave trails. Weapons are animated
+//! in `weapons.rs`, troops in `enemy.rs` and bosses in `boss.rs`.
 //!
 //! Gameplay code never reads any of this: it only changes how things look.
 
 use crate::art::{castle_mounts, p2, w3};
 use crate::assets::{GameAssets, PartHandle};
 use crate::combat::{ArcShot, Bullet};
-use crate::enemy::{Boss, Enemy};
-use crate::grid::Grid;
-use crate::items::{Loadout, ModuleKind, Stats};
+use crate::items::Loadout;
 use crate::models::Role;
-use crate::modules::Cooldowns;
-use crate::player::{Castle, CastleBody, MountOf};
-use crate::vfx::{muzzle_blast, rnd, spawn_fx, FxKind};
+use crate::player::{Castle, CastleBody};
+use crate::vfx::{rnd, spawn_fx, FxKind};
 use crate::{GameRng, GameState, Sim};
-use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use rand::Rng;
 use std::f32::consts::{PI, TAU};
@@ -26,18 +22,13 @@ pub struct AnimPlugin;
 
 impl Plugin for AnimPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<WeaponFire>()
-            .init_resource::<CastleSway>()
+        app.init_resource::<CastleSway>()
             .add_systems(OnEnter(GameState::Starting), reset)
-            .add_systems(
-                Update,
-                ((track_weapon_fire, animate_castle, animate_pieces).chain(), sink, trails).in_set(Sim::Resolve),
-            );
+            .add_systems(Update, ((animate_castle, animate_pieces).chain(), sink, trails).in_set(Sim::Resolve));
     }
 }
 
-fn reset(mut wf: ResMut<WeaponFire>, mut sway: ResMut<CastleSway>) {
-    *wf = WeaponFire::default();
+fn reset(mut sway: ResMut<CastleSway>) {
     *sway = CastleSway::default();
 }
 
@@ -45,246 +36,53 @@ fn wrap(a: f32) -> f32 {
     (a + PI).rem_euclid(TAU) - PI
 }
 
-fn ease_out(t: f32) -> f32 {
-    1.0 - (1.0 - t.clamp(0.0, 1.0)).powi(3)
-}
-
 // ---------------------------------------------------------------------------
-// Moving pieces
+// Moving pieces of the castle
 // ---------------------------------------------------------------------------
 
-/// A moving piece of a model (see `models::Role`).
+/// A moving piece of the castle model (see `models::Role`).
 #[derive(Component)]
 pub struct Piece {
     role: Role,
     pivot: Vec3,
     rest: Quat,
-    /// The castle or weapon mount whose state drives this piece.
-    owner: Entity,
     angle: f32,
-    /// Spin or swing speed; for barrels, whether the last shot came from here.
-    speed: f32,
 }
 
 /// Spawns the moving pieces for which `keep` is true under the entity being built.
-pub fn spawn_pieces(p: &mut ChildSpawnerCommands, parts: &[PartHandle], owner: Entity, keep: impl Fn(Role) -> bool) {
+pub fn spawn_pieces(p: &mut ChildSpawnerCommands, parts: &[PartHandle], keep: impl Fn(Role) -> bool) {
     for part in parts {
         if keep(part.role) {
-            spawn_piece(p, part, owner);
+            spawn_piece(p, part);
         }
     }
 }
 
-fn spawn_piece(p: &mut ChildSpawnerCommands, part: &PartHandle, owner: Entity) {
+fn spawn_piece(p: &mut ChildSpawnerCommands, part: &PartHandle) {
     p.spawn((
-        Piece { role: part.role, pivot: part.pivot, rest: part.rest, owner, angle: 0.0, speed: 1.0 },
+        Piece { role: part.role, pivot: part.pivot, rest: part.rest, angle: 0.0 },
         Transform::from_translation(part.pivot).with_rotation(part.rest),
         Visibility::Inherited,
     ))
     .with_children(|q| {
         part.model.spawn_parts(q, ());
         for sub in &part.parts {
-            spawn_piece(q, sub, owner);
+            spawn_piece(q, sub);
         }
     });
 }
 
-#[derive(Clone, Copy, PartialEq, Default)]
-enum Owner {
-    #[default]
-    None,
-    Castle,
-    Module(ModuleKind),
-}
-
-/// What an owner is doing this frame, as far as its pieces care.
-#[derive(Clone, Copy)]
-struct Drive {
-    kind: Owner,
-    /// Ground speed (for wheels).
-    speed: f32,
-    accel: f32,
-    /// Seconds since the main weapon fired, and whether that was this frame.
-    fired: f32,
-    just: bool,
-    /// For the side cannons: whether the last shot came out of this side.
-    side_ok: bool,
-    /// Yaw to aim at, relative to the owner.
-    aim: Option<f32>,
-    charging: bool,
-}
-
-impl Default for Drive {
-    fn default() -> Self {
-        Self {
-            kind: Owner::None,
-            speed: 0.0,
-            accel: 0.0,
-            fired: 99.0,
-            just: false,
-            side_ok: true,
-            aim: None,
-            charging: false,
-        }
-    }
-}
-
-/// When each weapon last fired, worked out from its cooldown timers.
-#[derive(Resource, Default)]
-struct WeaponFire {
-    last: HashMap<ModuleKind, (f32, f32)>,
-    /// Seconds since it fired, and whether that was its ability.
-    since: HashMap<ModuleKind, (f32, bool)>,
-}
-
-fn track_weapon_fire(time: Res<Time>, cds: Res<Cooldowns>, mut wf: ResMut<WeaponFire>) {
-    let dt = time.delta_secs();
-    let WeaponFire { last, since } = &mut *wf;
-    for (k, t) in &cds.0 {
-        let s = since.entry(*k).or_insert((99.0, false));
-        s.0 += dt;
-        if let Some(&(auto, ability)) = last.get(k) {
-            // A timer jumping back up means it just fired. (Retries without
-            // a target only add a fraction of a second.)
-            if t.ability > ability + 0.5 {
-                *s = (0.0, true);
-            } else if t.auto > auto + 0.3 {
-                *s = (0.0, false);
-            }
-        }
-        last.insert(*k, (t.auto, t.ability));
-    }
-}
-
-/// 0 → 1 the instant a gun fires, then eases back into place.
-fn recoil(s: f32) -> f32 {
-    if s < 0.035 { s / 0.035 } else { (-(s - 0.035) * 7.0).exp() }
-}
-
-fn animate_pieces(
-    mut commands: Commands,
-    time: Res<Time>,
-    grid: Res<Grid>,
-    stats: Res<Stats>,
-    assets: Res<GameAssets>,
-    wf: Res<WeaponFire>,
-    sway: Res<CastleSway>,
-    castle: Query<(Entity, &Transform, &Castle)>,
-    mounts: Query<(Entity, &MountOf, &GlobalTransform)>,
-    bosses: Query<(&Transform, &Enemy), With<Boss>>,
-    mut pieces: Query<(&mut Piece, &mut Transform, &mut Visibility, &GlobalTransform), (Without<Castle>, Without<Boss>)>,
-) {
-    let dt = time.delta_secs();
-    let t = time.elapsed_secs();
-    let Ok((ce, ctf, c)) = castle.single() else {
+/// Wheels roll with the castle's speed; flags wave in the wind.
+fn animate_pieces(time: Res<Time>, castle: Query<&Castle>, mut pieces: Query<(&mut Piece, &mut Transform), Without<Castle>>) {
+    let Ok(c) = castle.single() else {
         return;
     };
-    let cpos = p2(ctf.translation);
-    let mut owners: HashMap<Entity, Drive> = HashMap::default();
-    owners.insert(ce, Drive { kind: Owner::Castle, speed: c.speed, ..default() });
-
-    let boss_spots: Vec<(Vec2, f32)> = bosses.iter().map(|(tf, en)| (p2(tf.translation), en.radius)).collect();
-    for (e, mount, gt) in &mounts {
-        let kind = mount.0;
-        let (since, ability) = wf.since.get(&kind).copied().unwrap_or((99.0, false));
-        let from = p2(gt.translation());
-        let mut d = Drive {
-            kind: Owner::Module(kind),
-            speed: c.speed,
-            accel: sway.accel,
-            fired: since,
-            just: since < 1e-6,
-            charging: c.charge > 0.0,
-            ..default()
-        };
-        if matches!(kind, ModuleKind::ArrowLoft | ModuleKind::Mortar | ModuleKind::Ballista) {
-            // Same priorities as the guns themselves: a boss in range, else the nearest.
-            let range = kind.range() * stats.range;
-            let boss = boss_spots
-                .iter()
-                .filter(|(p, r)| p.distance(from) < range + r)
-                .min_by(|a, b| a.0.distance(from).total_cmp(&b.0.distance(from)))
-                .map(|(p, _)| *p);
-            let target = boss.or_else(|| grid.nearest(from, range).map(|g| g.pos));
-            d.aim = target.map(|p| wrap((p - from).to_angle() - c.heading));
-        }
-        if kind == ModuleKind::Broadside && d.just && !ability {
-            // On its own, the broadside only fires toward the side with enemies.
-            let out = p2(gt.rotation() * Vec3::Z).normalize_or_zero();
-            let range = kind.range() * stats.range;
-            let mut any = false;
-            grid.for_each_near(cpos, range, |g| {
-                if !any && g.pos.distance_squared(cpos) < range * range && (g.pos - cpos).normalize_or_zero().dot(out) > 0.5 {
-                    any = true;
-                }
-            });
-            d.side_ok = any;
-        }
-        owners.insert(e, d);
-    }
-    let turn = |rate: f32| 1.0 - (-rate * dt).exp();
-    for (mut pc, mut tf, mut vis, gt) in &mut pieces {
-        let d = owners.get(&pc.owner).copied().unwrap_or_default();
+    let dt = time.delta_secs();
+    let t = time.elapsed_secs();
+    for (mut pc, mut tf) in &mut pieces {
         match pc.role {
             Role::Wheel { r } => {
-                pc.angle -= d.speed * dt / r.max(0.1);
-                tf.rotation = pc.rest * Quat::from_rotation_z(pc.angle);
-            }
-            Role::Turret => {
-                let want = d.aim.unwrap_or(0.0);
-                pc.angle += wrap(want - pc.angle) * turn(7.0);
-                let yaw_q = Quat::from_rotation_y(pc.angle);
-                let kick = if matches!(d.kind, Owner::Module(_)) { recoil(d.fired) * 0.16 } else { 0.0 };
-                tf.rotation = pc.rest * yaw_q;
-                tf.translation = pc.pivot + yaw_q * Vec3::NEG_X * kick;
-            }
-            Role::Recoil { axis, dist, muzzle } => {
-                if d.just {
-                    pc.speed = if d.side_ok { 1.0 } else { 0.0 };
-                    if d.side_ok {
-                        let at = gt.transform_point(muzzle);
-                        let dir = gt.rotation() * muzzle.normalize_or(Vec3::X);
-                        match d.kind {
-                            Owner::Module(ModuleKind::Mortar) => muzzle_blast(&mut commands, &assets, at, dir, 1.3),
-                            Owner::Module(ModuleKind::Broadside) => muzzle_blast(&mut commands, &assets, at, dir, 1.0),
-                            Owner::Module(ModuleKind::MineLayer) => {
-                                spawn_fx(&mut commands, &assets, FxKind::Dust, at, 1.2, Vec3::Y * 0.5);
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                let k = recoil(d.fired) * pc.speed;
-                tf.translation = pc.pivot + pc.rest * axis * dist * k;
-            }
-            Role::Archer => {
-                let rest = pc.rest.to_euler(EulerRot::YXZ).0;
-                let want = d.aim.unwrap_or(rest);
-                pc.angle += wrap(want - pc.angle) * turn(9.0);
-                // Lean back as the arrow leaves, breathe while waiting.
-                let lean = recoil(d.fired) * 0.22;
-                let breathe = (t * 2.1 + pc.pivot.z * 4.0).sin() * 0.015;
-                tf.rotation = Quat::from_rotation_y(pc.angle) * Quat::from_rotation_z(lean + breathe);
-            }
-            Role::Ammo => {
-                let back_at = 0.45;
-                let want = if d.fired < back_at { Visibility::Hidden } else { Visibility::Inherited };
-                if *vis != want {
-                    *vis = want;
-                }
-                if matches!(d.kind, Owner::Module(_)) {
-                    // The next bolt is winched forward into place.
-                    let s = ((d.fired - back_at) / 0.35).clamp(0.0, 1.0);
-                    tf.translation = pc.pivot + Vec3::NEG_X * (1.0 - ease_out(s)) * 0.9;
-                }
-            }
-            Role::Swing => {
-                // The ram log lags as you speed up and swings forward when you
-                // brake; while charging it pounds back and forth.
-                let target = if d.charging { (t * 11.0).sin() * 0.5 } else { 0.0 };
-                let push = -d.accel * 0.6;
-                pc.speed += ((target - pc.angle) * 55.0 - pc.speed * 3.5 + push) * dt;
-                pc.angle = (pc.angle + pc.speed * dt).clamp(-0.7, 0.7);
+                pc.angle -= c.speed * dt / r.max(0.1);
                 tf.rotation = pc.rest * Quat::from_rotation_z(pc.angle);
             }
             Role::Flag => {

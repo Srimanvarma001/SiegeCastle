@@ -49,12 +49,12 @@ fn setup(
     let mut subjects = Vec::new();
     for k in ModuleKind::ALL {
         let (radius, center, turn) = match k {
-            ModuleKind::ArrowLoft => (1.9, Vec3::new(0.0, 1.1, 0.0), -0.5),
-            ModuleKind::Broadside => (1.3, Vec3::new(0.0, 0.6, 0.0), -1.9),
-            ModuleKind::Ballista => (1.6, Vec3::new(0.0, 0.8, 0.0), -0.4),
-            ModuleKind::Ram => (1.6, Vec3::new(0.5, 0.8, 0.0), -0.5),
-            ModuleKind::MineLayer => (1.7, Vec3::new(-0.3, 0.6, 0.0), 0.6),
-            _ => (1.3, Vec3::new(0.0, 0.6, 0.0), -0.5),
+            ModuleKind::ArrowLoft => (1.75, Vec3::new(0.0, 0.85, 0.0), -0.5),
+            ModuleKind::Broadside => (1.25, Vec3::new(0.0, 0.4, 0.2), -1.9),
+            ModuleKind::Ballista => (1.45, Vec3::new(0.0, 0.65, 0.0), -0.5),
+            ModuleKind::Ram => (1.5, Vec3::new(0.5, 0.85, 0.0), -0.5),
+            ModuleKind::MineLayer => (1.35, Vec3::new(-0.05, 0.55, 0.0), 0.7),
+            _ => (1.35, Vec3::new(0.0, 0.62, 0.0), -0.5),
         };
         subjects.push(Subject { icon: Icon::Module(k), model: assets.modules[&k].clone(), radius, center, turn });
     }

@@ -8,6 +8,7 @@ use crate::items::ModuleKind;
 use crate::boss_models;
 use crate::models::{self, Mat, Model, RigPart, Role};
 use crate::texgen::{self, Surface};
+use crate::weapon_models;
 use bevy::math::Affine2;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -56,8 +57,10 @@ pub struct GameAssets {
     pub castle: HashMap<(usize, Variant), ModelHandle>,
     /// The same castles with moving wheels and flags.
     pub castle_rigs: HashMap<(usize, Variant), RigHandle>,
+    /// Weapons in their rest pose (card portraits).
     pub modules: HashMap<ModuleKind, ModelHandle>,
-    pub module_rigs: HashMap<ModuleKind, RigHandle>,
+    /// Weapons as a mount plus moving parts (on the castle, see `weapons.rs`).
+    pub rigs: HashMap<ModuleKind, crate::weapons::RigHandle>,
     /// Troops: one vertex-colored mesh per look; a kind with several looks
     /// picks one at random so crowds don't look cloned.
     pub enemies: HashMap<EnemyKind, Vec<Handle<Mesh>>>,
@@ -260,8 +263,19 @@ pub fn create_assets(
         castle.insert((stage, v), upload(&mut meshes, &mats, models::castle(stage, v)));
         castle_rigs.insert((stage, v), upload_rig(&mut meshes, &mats, models::castle(stage, v)));
     }
-    let modules = ModuleKind::ALL.iter().map(|&k| (k, upload(&mut meshes, &mats, models::module(k)))).collect();
-    let module_rigs = ModuleKind::ALL.iter().map(|&k| (k, upload_rig(&mut meshes, &mats, models::module(k)))).collect();
+    let modules = ModuleKind::ALL.iter().map(|&k| (k, upload(&mut meshes, &mats, weapon_models::rig(k).combined()))).collect();
+    let rigs = ModuleKind::ALL
+        .iter()
+        .map(|&k| {
+            let rig = weapon_models::rig(k);
+            let parts = rig
+                .parts
+                .into_iter()
+                .map(|p| crate::weapons::PartHandle { role: p.role, parent: p.parent, rest: p.rest, model: upload(&mut meshes, &mats, p.model) })
+                .collect();
+            (k, crate::weapons::RigHandle { base: upload(&mut meshes, &mats, rig.base), parts })
+        })
+        .collect();
     let mut enemies = HashMap::default();
     enemies.insert(EnemyKind::Footman, vec![meshes.add(models::spearman()), meshes.add(models::man_at_arms())]);
     enemies.insert(EnemyKind::Archer, vec![meshes.add(models::archer())]);
@@ -342,7 +356,7 @@ pub fn create_assets(
         castle,
         castle_rigs,
         modules,
-        module_rigs,
+        rigs,
         enemies,
         archer_aim: meshes.add(models::archer_aiming()),
         bosses,

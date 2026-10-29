@@ -95,7 +95,7 @@ Everything is generated in code, with no art files to download:
 - **Gothic castle:** round towers with corbelled parapets and steep slate spires, a great hall with buttresses, lancet windows and a rose window, curtain walls with battlements, a gatehouse with a portcullis, and a clock tower at stage 3. It all rides on a timber-and-iron siege platform.
 - **Realistic materials:** cut limestone blocks with mortar, overlapping slate shingles with moss, weathered planks, forged iron with rust, meadow grass, mud, wheat and plaster. Each surface has color, relief (normal map) and roughness/metal maps, tiles seamlessly, and has mipmaps for crisp distance views.
 - **Countryside:** trees, firs and bushes built from leaf, needle and grass cards with a generated foliage texture; grass tufts with wildflowers; winding dirt roads with wheel ruts; farmsteads with timber-framed houses and wheat fields; ponds and a river.
-- **Weapons:** a bronze cannon on a spoked-wheel carriage, a torsion ballista, archers drawing longbows on a covered hoarding, a bronze mortar, and a covered battering ram.
+- **Weapons:** wide, low siege engines with chamfered timbers, iron straps, rivets, turned bronze barrels, ropes and chains: bronze cannons on carriages, a torsion ballista, archers on a covered hoarding, a bronze bombard, a battering ram hung on chains, and a mine chute. On the bigger castles they stand on stone gun platforms on the walls and face outward.
 - **Cards:** velvet-and-gold level-up cards (crimson for weapons, sapphire for artifacts, emerald for castle growth) showing real 3D renders of each item, made in an off-screen studio at startup.
 - **Lighting:** a warm late-afternoon sun, cool sky light, distance haze, bloom on fire, and SMAA anti-aliasing. There are no shadows, which keeps it fast on laptop graphics.
 - **Effects:** soft smoke, dust and fire sprites painted at startup, flashes of light that briefly light up the ground, shockwave rings, sparks and embers, muzzle blasts, smoke trails behind cannonballs and shells, blood splatter and scorch marks that fade away, and wheel ruts behind the castle.
@@ -104,7 +104,7 @@ Everything is generated in code, with no art files to download:
 ## How it moves
 
 - **Castle:** wheels roll with your speed, the body leans into turns, squats when you speed up, rocks and sheds stone chips when hit, and kicks up dust. Flags wave.
-- **Weapons:** the ballista, bombard and archers turn to track their target. Barrels slam back when they fire, the ballista bolt vanishes and is winched back in, and the ram log swings as you speed up and brake, then pounds back and forth while charging.
+- **Weapons:** the ballista turns, looses, and its claw catches the string so the windlass can winch it back before a new bolt drops in. The bombard turns, raises its barrel for near targets and kicks on each shot. The cannons recoil with a muzzle blast and are run out again on their wheels. Archers turn and lean back as they loose. The ram swings on its chains as you speed up and brake, in big strokes during Charge, and the mine chute's star wheel feeds one mine at a time.
 - **Troops:** march with a stride of their own, horses gallop, carts rumble, soldiers lunge and hack at your walls, archers stop and draw their bows once in range, and everyone squashes when hit. The fallen topple over and sink away; war carts are left as charred wrecks.
 - **Bosses:** wheels, turrets, ramps, gun ports, rams and the trebuchet arm all move with each attack (see the boss table above), and each boss collapses in its own way when destroyed.
 
@@ -145,7 +145,9 @@ src/
   director.rs     spawning, boss countdown, endless scaling
   combat.rs       shots, explosions, mines, coins
   vfx.rs          smoke, fire, sparks, flashes, debris and ground marks
-  anim.rs         moving parts of the castle and weapons, shot trails
+  anim.rs         castle wheels, flags, lean and sway; shot trails
+  weapon_models.rs the six weapons as rigs (a fixed mount plus moving parts)
+  weapons.rs      weapon animation: aiming, firing, reloading, the ram's swing
   progression.rs  XP, levels, card choices
   world.rs        terrain, forests, water, farms, sheep, camera, sun
   graphics.rs     quality presets, render scale, the screen camera
@@ -173,6 +175,10 @@ SIEGE_AUTOPILOT=1 SIEGE_LOG=1 SIEGE_SHOTS=30,120 SIEGE_EXIT_AFTER=150 cargo run 
 - `SIEGE_ENDLESS=1`: start in endless mode
 - `SIEGE_GALLERY=1`: spawn all five bosses at once
 - `SIEGE_TROOPS=1`: line up every troop look at several angles, save close-up, top and game-distance screenshots, then quit
+- `SIEGE_BOSS=3`: spawn boss 1-5 near the castle right away; `SIEGE_STILL=1` with the autopilot keeps the castle still
+- `SIEGE_STAGE=3`, `SIEGE_VARIANT=movement`, `SIEGE_LOADOUT=ballista,mortar,loft,ram,mines,cannons`: start at a castle stage with chosen weapons
+- `SIEGE_CAM=0.55,135,40`: close-up camera (zoom, turn and tilt in degrees; turn 0 looks from behind the castle, 180 from the front)
+- `SIEGE_ARMORY=1`: every weapon on the grass in front of the castle, firing on a loop (use with `SIEGE_CAM`)
 - `SIEGE_GOD=1`: castle cannot be destroyed
 - `SIEGE_LOWRES=1`: small window, for quick tests on machines without a GPU
 - `SIEGE_QUALITY=low|medium|high`: force a graphics preset

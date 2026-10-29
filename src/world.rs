@@ -512,12 +512,12 @@ fn absorb(
 
 /// Player zoom: the target set by the mouse wheel and the smoothed value.
 #[derive(Default)]
-struct PlayerZoom {
+pub struct PlayerZoom {
     target: f32,
     current: f32,
 }
 
-fn follow_camera(
+pub fn follow_camera(
     time: Res<Time<Real>>,
     shake: Res<Shake>,
     loadout: Res<Loadout>,
