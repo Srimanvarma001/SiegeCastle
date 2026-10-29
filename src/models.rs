@@ -1080,58 +1080,433 @@ fn soldier(m: &mut Model, tabard: Color, helmet: Color) {
     m.boxy(p, Vec3::new(0.03, 0.12, 0.03), Vec3::new(0.15, 1.38, 0.0), helmet);
 }
 
-pub fn footman() -> Mesh {
-    let mut m = Model::new();
-    soldier(&mut m, crimson(), steel());
-    // Kite shield and spear.
-    m.cube(Mat::Paint, Vec3::new(0.05, 0.75, 0.48), Vec3::new(0.3, 0.85, 0.24), Quat::from_rotation_y(0.3), rgb(0.55, 0.50, 0.42));
-    m.cube(Mat::Paint, Vec3::new(0.055, 0.55, 0.12), Vec3::new(0.31, 0.9, 0.24), Quat::from_rotation_y(0.3), crimson());
-    m.frustum_rot(Mat::Paint, Vec3::new(0.1, 0.2, -0.32), Quat::from_rotation_z(-0.25), 0.025, 0.02, 2.3, 5, timber(), true, false);
-    m.frustum_rot(Mat::Paint, Vec3::new(0.66, 2.43, -0.32), Quat::from_rotation_z(-0.25), 0.05, 0.0, 0.25, 4, steel(), false, false);
-    m.build_single()
+// ---------------------------------------------------------------------------
+// Enemy troops
+//
+// The enemy army wears crimson and gold, so it stands out against the green
+// fields and the blue of the player's castle. The camera looks down from
+// high above, so each troop type is told apart by what shows from the top:
+// spearmen in wide steel kettle hats behind round shields, men-at-arms in
+// pointed helms with kite shields, archers in red hoods with white-feathered
+// quivers, knights with a gold crest and a long striped lance, and war carts
+// under a striped canopy.
+// ---------------------------------------------------------------------------
+
+/// Troops are drawn a little larger than life so they read from the high camera.
+const INFANTRY_SCALE: f32 = 1.2;
+const KNIGHT_SCALE: f32 = 1.12;
+const CART_SCALE: f32 = 1.05;
+
+const P: Mat = Mat::Paint;
+
+fn foe_red() -> Color {
+    rgb(0.64, 0.09, 0.07)
+}
+fn foe_gold() -> Color {
+    rgb(0.90, 0.67, 0.20)
+}
+fn ivory() -> Color {
+    rgb(0.86, 0.80, 0.64)
+}
+fn hose() -> Color {
+    rgb(0.20, 0.16, 0.13)
+}
+fn helm_steel() -> Color {
+    rgb(0.68, 0.69, 0.72)
+}
+fn buff() -> Color {
+    rgb(0.58, 0.46, 0.30)
 }
 
+/// A tapered limb or pole from `a` to `b`.
+fn limb(m: &mut Model, a: Vec3, b: Vec3, ra: f32, rb: f32, seg: u32, c: Color) {
+    let d = b - a;
+    m.frustum_rot(P, a, Quat::from_rotation_arc(Vec3::Y, d.normalize()), ra, rb, d.length(), seg, c, true, false);
+}
+
+/// A small ball: joint, hand, rivet.
+fn ball(m: &mut Model, c: Vec3, r: f32, color: Color) {
+    m.blob(P, c, r, Vec3::ONE, color, 0.0, 0, 0);
+}
+
+/// Round plate (shield, wheel) facing `n`: `face` in front, `back` behind.
+#[allow(clippy::too_many_arguments)]
+fn disc(m: &mut Model, center: Vec3, n: Vec3, r: f32, thick: f32, seg: u32, face: Color, back: Color) {
+    let n = n.normalize();
+    let base = center - n * (thick / 2.0);
+    m.frustum_rot(P, base, Quat::from_rotation_arc(Vec3::Y, n), r, r, thick, seg, face, false, true);
+    m.frustum_rot(P, base, Quat::from_rotation_arc(Vec3::Y, -n), r, r, 0.002, seg, back, false, true);
+}
+
+/// Flat convex shape facing `n` and kept upright, from 2D points (x across, y up).
+/// With `back`, it also gets a back face in that color.
+fn plate(m: &mut Model, center: Vec3, n: Vec3, pts: &[Vec2], color: Color, back: Option<Color>) {
+    let n = n.normalize();
+    let up = (Vec3::Y - n * n.dot(Vec3::Y)).normalize_or(Vec3::X);
+    let across = up.cross(n);
+    let front: Vec<Vec3> = pts.iter().map(|p| center + across * p.x + up * p.y).collect();
+    let uvs = vec![Vec2::ZERO; pts.len()];
+    m.poly(P, color, &front, &uvs, n);
+    if let Some(b) = back {
+        let behind: Vec<Vec3> = front.iter().map(|p| *p - n * 0.01).collect();
+        m.poly(P, b, &behind, &uvs, -n);
+    }
+}
+
+/// Shield shape with a gold border and a gold band across it at `band` (y range).
+fn blazon(m: &mut Model, center: Vec3, n: Vec3, outline: &[Vec2], band: [Vec2; 4]) {
+    let nn = n.normalize();
+    let rim: Vec<Vec2> = outline.iter().map(|p| *p * 1.13 + Vec2::new(0.0, 0.012)).collect();
+    plate(m, center - nn * 0.012, n, &rim, foe_gold(), Some(timber()));
+    plate(m, center, n, outline, foe_red(), None);
+    plate(m, center + nn * 0.008, n, &band, foe_gold(), None);
+}
+
+fn finish(m: Model, scale: f32) -> Mesh {
+    let mut out = Model::new();
+    out.append(m, Transform::from_scale(Vec3::splat(scale)));
+    out.build_single()
+}
+
+/// Legs mid-stride with boots; the feet are `stride` apart front to back.
+fn legs(m: &mut Model, stride: f32, spread: f32, cloth: Color) {
+    for (z, s) in [(-0.11f32, 1.0f32), (0.11, -1.0)] {
+        let hip = Vec3::new(0.0, 0.72, z);
+        let foot = Vec3::new(s * stride / 2.0, 0.1, z * spread);
+        limb(m, hip, foot, 0.1, 0.07, 7, cloth);
+        m.boxy(P, Vec3::new(0.25, 0.13, 0.13), Vec3::new(foot.x + 0.05, 0.065, foot.z), leather());
+    }
+}
+
+/// Long coat over mail (or a shirt), belted, with a gold buckle.
+fn body(m: &mut Model, coat: Color, under: Color) {
+    m.frustum(P, Vec3::new(0.0, 0.40, 0.0), 0.29, 0.27, 0.12, 10, under, true);
+    m.frustum(P, Vec3::new(0.0, 0.46, 0.0), 0.31, 0.25, 0.38, 10, coat, true);
+    m.frustum(P, Vec3::new(0.0, 0.84, 0.0), 0.25, 0.29, 0.34, 10, coat, true);
+    m.frustum(P, Vec3::new(0.0, 0.80, 0.0), 0.262, 0.262, 0.07, 10, leather(), true);
+    m.boxy(P, Vec3::new(0.03, 0.07, 0.07), Vec3::new(0.262, 0.835, 0.0), foe_gold());
+}
+
+fn head(m: &mut Model) {
+    m.frustum(P, Vec3::new(0.0, 1.16, 0.0), 0.075, 0.07, 0.12, 6, skin(), true);
+    m.blob(P, Vec3::new(0.02, 1.37, 0.0), 0.15, Vec3::new(1.0, 1.12, 0.95), skin(), 0.0, 3, 1);
+}
+
+/// Mail hood around the neck and the sides of the head.
+fn coif(m: &mut Model) {
+    m.frustum(P, Vec3::new(-0.03, 1.12, 0.0), 0.2, 0.155, 0.2, 8, mail(), true);
+}
+
+/// Short shoulder cape: the red ring that marks the enemy from above.
+fn mantle(m: &mut Model, c: Color, r: f32) {
+    m.frustum(P, Vec3::new(0.0, 1.06, 0.0), r, 0.13, 0.2, 10, c, true);
+}
+
+/// Cloak hanging down the back.
+fn cape(m: &mut Model, c: Color) {
+    let pts = [Vec3::new(-0.27, 1.16, -0.25), Vec3::new(-0.27, 1.16, 0.25), Vec3::new(-0.38, 0.42, 0.3), Vec3::new(-0.38, 0.42, -0.3)];
+    m.poly(P, sh(c, 0.85), &pts, &[Vec2::ZERO; 4], Vec3::new(-1.0, -0.15, 0.0));
+}
+
+fn arm(m: &mut Model, shoulder: Vec3, elbow: Vec3, hand: Vec3, sleeve: Color, glove: Color) {
+    limb(m, shoulder, elbow, 0.08, 0.07, 6, sleeve);
+    ball(m, elbow, 0.07, sleeve);
+    limb(m, elbow, hand, 0.07, 0.055, 6, sleeve);
+    ball(m, hand, 0.062, glove);
+}
+
+/// Wide-brimmed steel hat: a bright disc from above.
+fn kettle_hat(m: &mut Model) {
+    let s = helm_steel();
+    m.blob(P, Vec3::new(0.01, 1.45, 0.0), 0.165, Vec3::new(1.0, 0.82, 1.0), s, 0.0, 4, 1);
+    m.frustum(P, Vec3::new(0.01, 1.40, 0.0), 0.30, 0.16, 0.09, 12, s, false);
+    m.frustum_rot(P, Vec3::new(0.01, 1.40, 0.0), Quat::from_rotation_x(std::f32::consts::PI), 0.30, 0.30, 0.001, 12, sh(s, 0.5), false, true);
+}
+
+/// Pointed helm with a nose guard.
+fn nasal_helm(m: &mut Model) {
+    let s = helm_steel();
+    m.frustum(P, Vec3::new(0.01, 1.40, 0.0), 0.172, 0.168, 0.07, 10, sh(s, 0.85), true);
+    m.frustum(P, Vec3::new(0.01, 1.47, 0.0), 0.168, 0.0, 0.27, 10, s, true);
+    m.boxy(P, Vec3::new(0.03, 0.15, 0.04), Vec3::new(0.185, 1.38, 0.0), s);
+}
+
+/// Spearman: kettle hat, round shield, spear held high.
+pub fn spearman() -> Mesh {
+    let mut m = Model::new();
+    legs(&mut m, 0.26, 1.15, hose());
+    body(&mut m, foe_red(), mail());
+    cape(&mut m, foe_red());
+    head(&mut m);
+    coif(&mut m);
+    kettle_hat(&mut m);
+    mantle(&mut m, foe_red(), 0.34);
+    // Round shield on the left arm, tilted up so its face shows from above.
+    arm(&mut m, Vec3::new(0.02, 1.12, -0.28), Vec3::new(0.14, 0.88, -0.36), Vec3::new(0.3, 0.94, -0.33), mail(), leather());
+    let n = Vec3::new(0.5, 0.45, -0.74).normalize();
+    let c = Vec3::new(0.34, 0.98, -0.42);
+    disc(&mut m, c, n, 0.36, 0.05, 12, foe_red(), timber());
+    disc(&mut m, c - n * 0.02, n, 0.405, 0.03, 12, foe_gold(), timber());
+    ball(&mut m, c + n * 0.035, 0.08, foe_gold());
+    // Spear.
+    let hand = Vec3::new(0.26, 0.98, 0.33);
+    arm(&mut m, Vec3::new(0.02, 1.12, 0.28), Vec3::new(0.06, 0.86, 0.37), hand, mail(), leather());
+    let d = Vec3::new(0.5, 0.86, 0.0).normalize();
+    limb(&mut m, hand - d * 0.85, hand + d * 1.5, 0.03, 0.025, 5, timber());
+    limb(&mut m, hand + d * 1.5, hand + d * 1.6, 0.02, 0.06, 4, helm_steel());
+    limb(&mut m, hand + d * 1.6, hand + d * 1.85, 0.06, 0.0, 4, helm_steel());
+    finish(m, INFANTRY_SCALE)
+}
+
+/// Man-at-arms: pointed helm, kite shield, sword raised.
+pub fn man_at_arms() -> Mesh {
+    let mut m = Model::new();
+    legs(&mut m, 0.3, 1.2, hose());
+    body(&mut m, foe_red(), mail());
+    cape(&mut m, foe_red());
+    head(&mut m);
+    coif(&mut m);
+    nasal_helm(&mut m);
+    mantle(&mut m, foe_red(), 0.34);
+    arm(&mut m, Vec3::new(0.02, 1.12, -0.28), Vec3::new(0.16, 0.9, -0.34), Vec3::new(0.3, 0.96, -0.3), mail(), leather());
+    let kite = [Vec2::new(-0.25, 0.32), Vec2::new(0.25, 0.32), Vec2::new(0.23, -0.04), Vec2::new(0.0, -0.5), Vec2::new(-0.23, -0.04)];
+    let pale = [Vec2::new(-0.045, 0.32), Vec2::new(0.045, 0.32), Vec2::new(0.045, -0.4), Vec2::new(-0.045, -0.4)];
+    blazon(&mut m, Vec3::new(0.36, 0.9, -0.4), Vec3::new(0.55, 0.3, -0.78), &kite, pale);
+    let hand = Vec3::new(0.2, 1.12, 0.36);
+    arm(&mut m, Vec3::new(0.02, 1.12, 0.28), Vec3::new(0.02, 0.92, 0.42), hand, mail(), leather());
+    let d = Vec3::new(0.35, 0.92, 0.12).normalize();
+    let rot = Quat::from_rotation_arc(Vec3::Y, d);
+    m.cube(P, Vec3::new(0.075, 0.78, 0.018), hand + d * 0.5, rot, rgb(0.82, 0.84, 0.88));
+    m.cube(P, Vec3::new(0.28, 0.04, 0.05), hand + d * 0.1, rot, foe_gold());
+    ball(&mut m, hand - d * 0.1, 0.045, foe_gold());
+    finish(m, INFANTRY_SCALE)
+}
+
+/// Archer in a quilted buff coat with a red hood and mantle, quiver on the back.
+fn archer_body(m: &mut Model, stride: f32, spread: f32) {
+    legs(m, stride, spread, hose());
+    body(m, buff(), sh(buff(), 0.7));
+    head(m);
+    // Hood with the face left open, and its long tail.
+    m.blob(P, Vec3::new(-0.045, 1.42, 0.0), 0.178, Vec3::new(1.0, 1.0, 1.02), foe_red(), 0.0, 6, 1);
+    limb(m, Vec3::new(-0.18, 1.42, 0.0), Vec3::new(-0.32, 1.08, 0.04), 0.06, 0.02, 5, foe_red());
+    mantle(m, foe_red(), 0.36);
+    // Quiver full of white-fletched arrows.
+    let a = Vec3::new(-0.3, 0.62, -0.1);
+    let b = Vec3::new(-0.4, 1.34, 0.18);
+    limb(m, a, b, 0.075, 0.09, 7, leather());
+    let d = (b - a).normalize();
+    for (i, off) in [Vec3::new(0.03, 0.0, 0.03), Vec3::new(-0.03, 0.0, -0.02), Vec3::new(0.02, 0.0, -0.045), Vec3::new(-0.04, 0.0, 0.04)].into_iter().enumerate() {
+        let base = b + off;
+        limb(m, base - d * 0.05, base + d * (0.14 + i as f32 * 0.02), 0.03, 0.03, 3, rgb(0.93, 0.91, 0.86));
+    }
+}
+
+/// Longbow held at `grip`, its stave along `along`, bending toward `back`.
+/// The string runs to the drawing hand, or straight when there is none.
+fn bow(m: &mut Model, grip: Vec3, along: Vec3, back: Vec3, draw: Option<Vec3>) {
+    let (a, k) = (along.normalize(), back.normalize());
+    let wood = rgb(0.45, 0.30, 0.16);
+    let mut tips = [Vec3::ZERO; 2];
+    for (i, s) in [1.0f32, -1.0].into_iter().enumerate() {
+        let mid = grip + a * (s * 0.4) + k * 0.05;
+        let tip = grip + a * (s * 0.78) + k * 0.2;
+        limb(m, grip, mid, 0.035, 0.03, 5, wood);
+        limb(m, mid, tip, 0.03, 0.015, 5, wood);
+        tips[i] = tip;
+    }
+    let string = rgb(0.9, 0.88, 0.8);
+    match draw {
+        Some(h) => {
+            for t in tips {
+                limb(m, t, h, 0.007, 0.007, 3, string);
+            }
+        }
+        None => limb(m, tips[0], tips[1], 0.007, 0.007, 3, string),
+    }
+}
+
+/// Archer on the march, longbow in hand.
 pub fn archer() -> Mesh {
     let mut m = Model::new();
-    archer_figure(&mut m, rgb(0.24, 0.30, 0.16), rgb(0.26, 0.20, 0.13));
-    m.build_single()
+    archer_body(&mut m, 0.26, 1.15);
+    let grip = Vec3::new(0.2, 0.84, -0.34);
+    arm(&mut m, Vec3::new(0.02, 1.12, -0.28), Vec3::new(0.08, 0.9, -0.36), grip, buff(), leather());
+    arm(&mut m, Vec3::new(0.02, 1.12, 0.28), Vec3::new(-0.1, 0.9, 0.36), Vec3::new(-0.08, 0.7, 0.34), buff(), leather());
+    bow(&mut m, grip, Vec3::new(0.42, 0.9, 0.0), Vec3::new(-0.9, 0.42, 0.0), None);
+    finish(m, INFANTRY_SCALE)
 }
 
+/// Archer standing to shoot, bow drawn.
+pub fn archer_aiming() -> Mesh {
+    let mut m = Model::new();
+    archer_body(&mut m, 0.36, 1.5);
+    let grip = Vec3::new(0.6, 1.24, -0.12);
+    let draw = Vec3::new(0.1, 1.36, 0.1);
+    arm(&mut m, Vec3::new(0.02, 1.14, -0.27), Vec3::new(0.32, 1.2, -0.2), grip, buff(), leather());
+    arm(&mut m, Vec3::new(0.02, 1.14, 0.28), Vec3::new(-0.14, 1.28, 0.3), draw, buff(), leather());
+    bow(&mut m, grip, Vec3::new(0.12, 1.0, 0.05), Vec3::new(-1.0, 0.12, 0.0), Some(draw));
+    let d = (grip - draw).normalize();
+    limb(&mut m, draw - d * 0.05, grip + d * 0.12, 0.012, 0.012, 3, rgb(0.6, 0.5, 0.35));
+    limb(&mut m, grip + d * 0.12, grip + d * 0.22, 0.03, 0.0, 4, helm_steel());
+    finish(m, INFANTRY_SCALE)
+}
+
+/// Mounted knight: black destrier in a crimson caparison, gold-crested helm,
+/// heater shield, and a striped lance couched for the charge.
 pub fn knight() -> Mesh {
     let mut m = Model::new();
-    let p = Mat::Paint;
-    let horse = rgb(0.30, 0.20, 0.13);
-    m.blob(p, Vec3::new(0.0, 1.05, 0.0), 0.42, Vec3::new(1.9, 1.0, 0.8), horse, 0.04, 9, 2);
-    m.frustum_rot(p, Vec3::new(0.6, 1.2, 0.0), Quat::from_rotation_z(-0.7), 0.2, 0.14, 0.7, 8, horse, true, false);
-    m.blob(p, Vec3::new(1.12, 1.62, 0.0), 0.16, Vec3::new(1.8, 0.9, 0.8), horse, 0.0, 9, 2);
-    for (x, z) in [(-0.55, -0.16), (-0.55, 0.16), (0.55, -0.16), (0.55, 0.16)] {
-        m.frustum(p, Vec3::new(x, 0.0, z), 0.06, 0.08, 0.85, 6, sh(horse, 0.8), true);
+    let horse = rgb(0.13, 0.10, 0.09);
+    let (red, gold, steel) = (foe_red(), foe_gold(), helm_steel());
+    // Legs in a gallop: forelegs reaching, hind legs pushing off.
+    for (hip, knee, hoof) in [
+        (Vec3::new(0.55, 0.9, -0.17), Vec3::new(0.9, 0.6, -0.17), Vec3::new(1.12, 0.32, -0.17)),
+        (Vec3::new(0.5, 0.9, 0.17), Vec3::new(0.78, 0.52, 0.17), Vec3::new(0.84, 0.16, 0.17)),
+        (Vec3::new(-0.55, 0.9, -0.17), Vec3::new(-0.7, 0.5, -0.17), Vec3::new(-1.0, 0.2, -0.17)),
+        (Vec3::new(-0.6, 0.9, 0.17), Vec3::new(-0.82, 0.55, 0.17), Vec3::new(-1.15, 0.36, 0.17)),
+    ] {
+        limb(&mut m, hip, knee, 0.1, 0.065, 6, horse);
+        ball(&mut m, knee, 0.065, horse);
+        limb(&mut m, knee, hoof, 0.06, 0.05, 6, horse);
+        ball(&mut m, hoof, 0.07, rgb(0.08, 0.07, 0.06));
     }
-    m.frustum_rot(p, Vec3::new(-0.75, 1.15, 0.0), Quat::from_rotation_z(2.4), 0.06, 0.03, 0.6, 5, rgb(0.12, 0.09, 0.07), true, false);
-    // Caparison.
-    m.frustum(p, Vec3::new(0.0, 0.62, 0.0), 0.58, 0.48, 0.5, 12, crimson(), true);
-    // Rider in plate.
-    m.frustum(p, Vec3::new(-0.1, 1.35, 0.0), 0.24, 0.21, 0.6, 10, steel(), true);
-    m.blob(p, Vec3::new(-0.1, 2.08, 0.0), 0.17, Vec3::new(1.0, 1.2, 1.0), steel(), 0.0, 5, 2);
-    m.cube(p, Vec3::new(0.06, 0.8, 0.5), Vec3::new(-0.36, 1.6, 0.0), Quat::from_rotation_z(0.12), crimson());
-    m.frustum_rot(p, Vec3::new(-0.2, 1.65, 0.28), Quat::from_rotation_z(-1.45), 0.04, 0.02, 2.6, 6, rgb(0.62, 0.55, 0.42), true, false);
-    m.build_single()
+    // Body and neck under the caparison, steel-faced head, ears and tail.
+    m.blob(P, Vec3::new(0.0, 1.12, 0.0), 0.42, Vec3::new(1.95, 0.95, 0.8), red, 0.0, 9, 1);
+    limb(&mut m, Vec3::new(0.55, 1.2, 0.0), Vec3::new(0.95, 1.78, 0.0), 0.23, 0.14, 8, red);
+    ball(&mut m, Vec3::new(0.95, 1.83, 0.0), 0.15, red);
+    limb(&mut m, Vec3::new(0.92, 1.86, 0.0), Vec3::new(1.4, 1.5, 0.0), 0.15, 0.085, 7, steel);
+    for z in [-0.07f32, 0.07] {
+        limb(&mut m, Vec3::new(0.95, 1.93, z), Vec3::new(0.9, 2.08, z * 1.4), 0.035, 0.0, 4, horse);
+    }
+    limb(&mut m, Vec3::new(-0.8, 1.3, 0.0), Vec3::new(-1.2, 0.8, 0.0), 0.08, 0.03, 5, horse);
+    // Caparison skirts with a gold hem and a gold roundel on each side.
+    let (x0, x1, top, hem) = (-0.86, 0.8, 1.14, 0.56);
+    for s in [-1.0f32, 1.0] {
+        let z = s * 0.35;
+        let pts = [Vec3::new(x0, top, z), Vec3::new(x1, top, z), Vec3::new(x1 - 0.06, hem, z * 1.08), Vec3::new(x0 + 0.04, hem, z * 1.08)];
+        m.poly(P, red, &pts, &[Vec2::ZERO; 4], Vec3::Z * s);
+        m.boxy(P, Vec3::new(x1 - x0 - 0.1, 0.06, 0.02), Vec3::new((x0 + x1) / 2.0, hem + 0.03, z * 1.08), gold);
+        disc(&mut m, Vec3::new(-0.05, 0.86, z * 1.06), Vec3::Z * s, 0.14, 0.01, 10, gold, gold);
+    }
+    for (x, s) in [(x1, 1.0f32), (x0, -1.0)] {
+        let pts = [Vec3::new(x, top, -0.35), Vec3::new(x, top, 0.35), Vec3::new(x - s * 0.05, hem, 0.38), Vec3::new(x - s * 0.05, hem, -0.38)];
+        m.poly(P, sh(red, 0.9), &pts, &[Vec2::ZERO; 4], Vec3::X * s);
+    }
+    // Rider: plate legs, red surcoat, steel pauldrons and a great helm.
+    for s in [-1.0f32, 1.0] {
+        let (hip, knee, foot) = (Vec3::new(-0.06, 1.5, s * 0.16), Vec3::new(0.18, 1.36, s * 0.37), Vec3::new(0.12, 0.98, s * 0.4));
+        limb(&mut m, hip, knee, 0.1, 0.08, 6, steel);
+        ball(&mut m, knee, 0.08, steel);
+        limb(&mut m, knee, foot, 0.075, 0.06, 6, steel);
+        m.boxy(P, Vec3::new(0.22, 0.08, 0.1), foot + Vec3::new(0.04, -0.02, 0.0), sh(steel, 0.7));
+    }
+    m.frustum(P, Vec3::new(-0.08, 1.42, 0.0), 0.3, 0.24, 0.3, 10, red, true);
+    m.frustum(P, Vec3::new(-0.08, 1.72, 0.0), 0.24, 0.28, 0.34, 10, red, true);
+    m.frustum(P, Vec3::new(-0.08, 1.68, 0.0), 0.25, 0.25, 0.06, 10, gold, true);
+    for s in [-1.0f32, 1.0] {
+        m.blob(P, Vec3::new(-0.08, 2.0, s * 0.27), 0.12, Vec3::new(1.0, 0.7, 1.0), steel, 0.0, 2, 1);
+    }
+    m.frustum(P, Vec3::new(-0.08, 2.04, 0.0), 0.09, 0.09, 0.08, 6, mail(), true);
+    m.frustum(P, Vec3::new(-0.06, 2.1, 0.0), 0.16, 0.15, 0.3, 10, steel, true);
+    m.boxy(P, Vec3::new(0.03, 0.035, 0.2), Vec3::new(0.095, 2.27, 0.0), rgb(0.05, 0.05, 0.06));
+    m.blob(P, Vec3::new(-0.1, 2.48, 0.0), 0.12, Vec3::new(1.7, 0.85, 0.45), gold, 0.0, 5, 1);
+    // Shield arm and lance arm.
+    let glove = sh(steel, 0.7);
+    arm(&mut m, Vec3::new(-0.08, 1.98, -0.28), Vec3::new(0.04, 1.72, -0.4), Vec3::new(0.2, 1.8, -0.36), steel, glove);
+    arm(&mut m, Vec3::new(-0.08, 1.98, 0.28), Vec3::new(-0.24, 1.74, 0.38), Vec3::new(0.12, 1.74, 0.3), steel, glove);
+    let heater = [Vec2::new(-0.21, 0.26), Vec2::new(0.21, 0.26), Vec2::new(0.2, 0.0), Vec2::new(0.0, -0.33), Vec2::new(-0.2, 0.0)];
+    let fess = [Vec2::new(-0.21, 0.09), Vec2::new(0.21, 0.09), Vec2::new(0.205, 0.0), Vec2::new(-0.205, 0.0)];
+    blazon(&mut m, Vec3::new(0.06, 1.74, -0.5), Vec3::new(0.2, 0.15, -1.0), &heater, fess);
+    // Striped lance with a vamplate, a steel tip and a gold pennant.
+    let (from, to) = (Vec3::new(-0.75, 1.68, 0.3), Vec3::new(2.35, 1.95, 0.22));
+    let (d, len) = ((to - from).normalize(), (to - from).length());
+    let at = |t: f32| from + d * (len * t);
+    let stripes = 6;
+    for i in 0..stripes {
+        let (t0, t1) = (i as f32 / stripes as f32, (i + 1) as f32 / stripes as f32);
+        limb(&mut m, at(t0), at(t1), 0.05 - 0.025 * t0, 0.05 - 0.025 * t1, 6, if i % 2 == 0 { red } else { ivory() });
+    }
+    m.frustum_rot(P, at(0.4), Quat::from_rotation_arc(Vec3::Y, -d), 0.035, 0.17, 0.22, 10, steel, true, true);
+    limb(&mut m, to, to + d * 0.25, 0.03, 0.0, 5, steel);
+    let pennant = [at(0.86), at(0.72), at(0.62) + Vec3::new(-0.1, -0.3, 0.0)];
+    for s in [-1.0f32, 1.0] {
+        m.poly(P, gold, &pennant, &[Vec2::ZERO; 3], Vec3::Z * s);
+    }
+    finish(m, KNIGHT_SCALE)
 }
 
+/// Spiked war cart: an iron-faced battering wagon under a striped canopy,
+/// shoved along by two soldiers.
 pub fn cart() -> Mesh {
     let mut m = Model::new();
-    let p = Mat::Paint;
-    m.boxy(p, Vec3::new(2.6, 0.9, 1.6), Vec3::new(0.0, 1.0, 0.0), timber());
-    m.roof(Vec3::new(-0.1, 1.45, 0.0), Quat::IDENTITY, 2.4, 1.7, 0.7, 0.08, crimson(), p, timber(), p);
-    for x in [-0.8f32, 0.8] {
-        for s in [-1.0f32, 1.0] {
-            m.frustum_rot(p, Vec3::new(x, 0.5, s * 0.8), Quat::from_rotation_x(s * FRAC_PI_2), 0.5, 0.5, 0.2, 12, sh(timber(), 0.7), true, true);
+    let (wood, dark, iron) = (timber(), sh(timber(), 0.7), rgb(0.28, 0.28, 0.30));
+    // Bed, plank sides and corner posts.
+    m.boxy(P, Vec3::new(2.6, 0.24, 1.5), Vec3::new(0.0, 0.76, 0.0), dark);
+    for s in [-1.0f32, 1.0] {
+        m.boxy(P, Vec3::new(2.5, 0.5, 0.08), Vec3::new(-0.05, 1.12, s * 0.72), wood);
+        for x in [-1.2f32, 0.0, 1.15] {
+            m.boxy(P, Vec3::new(0.12, 0.56, 0.1), Vec3::new(x, 1.12, s * 0.74), dark);
         }
     }
-    for z in [-0.5, 0.0, 0.5] {
-        m.frustum_rot(p, Vec3::new(1.3, 0.9, z), Quat::from_rotation_z(-FRAC_PI_2), 0.12, 0.0, 0.7, 5, steel(), false, false);
+    m.boxy(P, Vec3::new(0.08, 0.5, 1.4), Vec3::new(-1.26, 1.12, 0.0), wood);
+    // Striped canopy.
+    let (n, len) = (6, 2.5);
+    for i in 0..n {
+        let x = -1.3 + len * (i as f32 + 0.5) / n as f32;
+        let c = if i % 2 == 0 { foe_red() } else { ivory() };
+        m.roof(Vec3::new(x, 1.37, 0.0), Quat::IDENTITY, len / n as f32, 1.62, 0.72, 0.0, c, P, c, P);
     }
-    m.build_single()
+    // Iron ram face bristling with spikes.
+    let lean = 0.3f32;
+    m.cube(P, Vec3::new(0.12, 1.0, 1.62), Vec3::new(1.36, 1.08, 0.0), Quat::from_rotation_z(lean), iron);
+    for (y, z) in [(0.82, -0.55), (0.82, 0.0), (0.82, 0.55), (1.3, -0.3), (1.3, 0.3)] {
+        let base = Vec3::new(1.42 - (y - 1.08) * lean.tan(), y, z);
+        limb(&mut m, base, base + Vec3::X * 0.6, 0.085, 0.0, 6, helm_steel());
+    }
+    // Iron-shod wheels.
+    for x in [-0.8f32, 0.8] {
+        for s in [-1.0f32, 1.0] {
+            let c = Vec3::new(x, 0.5, s * 0.86);
+            disc(&mut m, c, Vec3::Z * s, 0.47, 0.14, 12, dark, dark);
+            disc(&mut m, c - Vec3::Z * (s * 0.01), Vec3::Z * s, 0.5, 0.1, 14, iron, iron);
+            ball(&mut m, c + Vec3::Z * (s * 0.08), 0.09, iron);
+        }
+    }
+    // War banner on the back corner.
+    let pole = Vec3::new(-1.15, 1.2, 0.7);
+    limb(&mut m, pole, pole + Vec3::Y * 1.75, 0.03, 0.025, 5, dark);
+    let top = pole + Vec3::Y * 1.7;
+    let flag = [top, top + Vec3::new(-0.72, -0.04, 0.0), top + Vec3::new(-0.72, -0.46, 0.0), top + Vec3::new(0.0, -0.44, 0.0)];
+    let stripe = [top + Vec3::new(0.0, -0.17, 0.0), top + Vec3::new(-0.72, -0.19, 0.0), top + Vec3::new(-0.72, -0.29, 0.0), top + Vec3::new(0.0, -0.27, 0.0)];
+    for s in [-1.0f32, 1.0] {
+        m.poly(P, foe_red(), &flag, &[Vec2::ZERO; 4], Vec3::Z * s);
+        let lifted: Vec<Vec3> = stripe.iter().map(|p| *p + Vec3::Z * (s * 0.005)).collect();
+        m.poly(P, foe_gold(), &lifted, &[Vec2::ZERO; 4], Vec3::Z * s);
+    }
+    // Two soldiers leaning into the back of the cart.
+    for z in [-0.42f32, 0.42] {
+        let hip = Vec3::new(-2.0, 0.68, z);
+        for (foot, w) in [(Vec3::new(-1.75, 0.1, z * 1.05), 0.1), (Vec3::new(-2.55, 0.1, z * 0.95), 0.09)] {
+            limb(&mut m, hip, foot, w, 0.07, 6, hose());
+            m.boxy(P, Vec3::new(0.25, 0.13, 0.13), Vec3::new(foot.x + 0.05, 0.065, foot.z), leather());
+        }
+        let place = Transform::from_translation(hip) * Transform::from_rotation(Quat::from_rotation_z(-0.5)) * Transform::from_xyz(0.0, -0.72, 0.0);
+        m.append(pusher(), place);
+    }
+    finish(m, CART_SCALE)
+}
+
+/// Upper body of a soldier pushing with both arms out in front.
+fn pusher() -> Model {
+    let mut m = Model::new();
+    body(&mut m, foe_red(), mail());
+    head(&mut m);
+    kettle_hat(&mut m);
+    mantle(&mut m, foe_red(), 0.33);
+    for s in [-1.0f32, 1.0] {
+        arm(&mut m, Vec3::new(0.02, 1.12, s * 0.28), Vec3::new(0.3, 1.1, s * 0.3), Vec3::new(0.58, 1.12, s * 0.24), mail(), leather());
+    }
+    m
 }
 
 pub fn sheep() -> Mesh {

@@ -26,6 +26,7 @@ mod modules;
 mod player;
 mod previews;
 mod progression;
+mod studio;
 mod texgen;
 mod world;
 
@@ -139,6 +140,7 @@ fn main() {
             previews::PreviewsPlugin,
             hud::HudPlugin,
             debug::DebugPlugin,
+            studio::StudioPlugin,
         ))
         .add_systems(OnEnter(GameState::Starting), start_run)
         .add_systems(Update, (pause_and_restart, tick_run_time))

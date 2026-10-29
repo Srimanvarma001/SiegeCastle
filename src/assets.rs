@@ -36,8 +36,11 @@ pub struct GameAssets {
     /// Castle per (stage, variant).
     pub castle: HashMap<(usize, Variant), ModelHandle>,
     pub modules: HashMap<ModuleKind, ModelHandle>,
-    /// Troops: one vertex-colored mesh each.
-    pub enemies: HashMap<EnemyKind, Handle<Mesh>>,
+    /// Troops: one vertex-colored mesh per look; a kind with several looks
+    /// picks one at random so crowds don't look cloned.
+    pub enemies: HashMap<EnemyKind, Vec<Handle<Mesh>>>,
+    /// Archer with the bow drawn, shown while it is in range to shoot.
+    pub archer_aim: Handle<Mesh>,
     pub bosses: HashMap<EnemyKind, ModelHandle>,
     pub villages: Vec<ModelHandle>,
     pub sheep: Handle<Mesh>,
@@ -90,6 +93,8 @@ pub struct Mats {
     /// Vertex-colored, for troops and small details.
     pub vc: Handle<StandardMaterial>,
     pub flash: Handle<StandardMaterial>,
+    /// Vertex-colored but burnt dark, for wrecked war carts.
+    pub charred: Handle<StandardMaterial>,
     pub fire: Handle<StandardMaterial>,
     pub spark: Handle<StandardMaterial>,
     pub smoke: Handle<StandardMaterial>,
@@ -212,10 +217,10 @@ pub fn create_assets(
     }
     let modules = ModuleKind::ALL.iter().map(|&k| (k, upload(&mut meshes, &mats, models::module(k)))).collect();
     let mut enemies = HashMap::default();
-    enemies.insert(EnemyKind::Footman, meshes.add(models::footman()));
-    enemies.insert(EnemyKind::Archer, meshes.add(models::archer()));
-    enemies.insert(EnemyKind::Knight, meshes.add(models::knight()));
-    enemies.insert(EnemyKind::Cart, meshes.add(models::cart()));
+    enemies.insert(EnemyKind::Footman, vec![meshes.add(models::spearman()), meshes.add(models::man_at_arms())]);
+    enemies.insert(EnemyKind::Archer, vec![meshes.add(models::archer())]);
+    enemies.insert(EnemyKind::Knight, vec![meshes.add(models::knight())]);
+    enemies.insert(EnemyKind::Cart, vec![meshes.add(models::cart())]);
     let mut bosses = HashMap::default();
     for (kind, model) in [
         (EnemyKind::SiegeTower, models::siege_tower()),
@@ -238,6 +243,7 @@ pub fn create_assets(
     let m = Mats {
         vc: mats[&Mat::Paint].clone(),
         flash: materials.add(glow(Color::WHITE, LinearRgba::rgb(3.0, 2.6, 2.2))),
+        charred: materials.add(StandardMaterial { base_color: Color::srgb(0.22, 0.19, 0.17), perceptual_roughness: 0.95, ..default() }),
         fire: materials.add(glow(Color::srgb(1.0, 0.7, 0.3), LinearRgba::rgb(14.0, 5.5, 1.2))),
         spark: materials.add(glow(Color::srgb(1.0, 0.85, 0.5), LinearRgba::rgb(7.0, 4.0, 1.2))),
         smoke: materials.add(soft(Color::srgb(0.82, 0.81, 0.79), 0.38)),
@@ -298,6 +304,7 @@ pub fn create_assets(
         castle,
         modules,
         enemies,
+        archer_aim: meshes.add(models::archer_aiming()),
         bosses,
         villages: (0..4).map(|i| upload(&mut meshes, &mats, models::village(i))).collect(),
         sheep: meshes.add(models::sheep()),
