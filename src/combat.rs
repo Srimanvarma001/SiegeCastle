@@ -2,7 +2,7 @@
 
 use crate::art::{p2, w3, yaw};
 use crate::assets::GameAssets;
-use crate::enemy::{Boss, Enemy, EnemyKind};
+use crate::enemy::{spawn_corpse, Boss, Corpse, Enemy, EnemyKind, MAX_CORPSES};
 use crate::grid::{Grid, MAX_ENEMY_RADIUS};
 use crate::items::Stats;
 use crate::player::Castle;
@@ -311,11 +311,13 @@ fn enemy_deaths(
     mut shake: ResMut<Shake>,
     mut progress: ResMut<Progress>,
     mut defeated: MessageWriter<BossDefeated>,
-    enemies: Query<(Entity, &Transform, &Enemy, Option<&Boss>)>,
+    enemies: Query<(Entity, &Transform, &Enemy, Option<&Boss>, Option<&Mesh3d>)>,
     coins: Query<(), With<Coin>>,
+    corpses: Query<(), With<Corpse>>,
 ) {
     let mut coin_count = coins.iter().count();
-    for (e, tf, en, boss) in &enemies {
+    let mut corpse_count = corpses.iter().count();
+    for (e, tf, en, boss, mesh) in &enemies {
         if en.hp > 0.0 {
             continue;
         }
@@ -341,6 +343,12 @@ fn enemy_deaths(
             spawn_fx(&mut commands, &assets, FxKind::Blood, w3(pos, 0.02), 0.5 + en.radius * 0.6, Vec3::ZERO);
             if en.kind == EnemyKind::Cart {
                 explosion(&mut commands, &assets, &mut rng, pos, 2.0);
+            }
+            if let Some(mesh) = mesh
+                && corpse_count < MAX_CORPSES
+            {
+                corpse_count += 1;
+                spawn_corpse(&mut commands, &assets, en, tf, mesh);
             }
         }
 

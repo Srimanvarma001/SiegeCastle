@@ -10,13 +10,19 @@ use crate::player::Castle;
 use crate::{GameEntity, GameRng, MAP_HALF, Shake, Sim};
 use bevy::prelude::*;
 use rand::Rng;
+use std::f32::consts::{PI, TAU};
+
+/// Archers shoot at the castle from this far away.
+const ARCHER_RANGE: f32 = 21.0;
+/// At most this many fallen troops lie around at once.
+pub const MAX_CORPSES: usize = 160;
 
 pub struct EnemyPlugin;
 
 impl Plugin for EnemyPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(OnEnter(crate::GameState::Starting), spawn_pointer)
-            .add_systems(Update, boss_pointer.in_set(Sim::Resolve))
+            .add_systems(Update, (boss_pointer, corpses).in_set(Sim::Resolve))
             .add_systems(Update, (enemy_move, boss_ai).in_set(Sim::Move))
             .add_systems(Update, archer_fire.in_set(Sim::Combat));
     }
@@ -111,6 +117,14 @@ pub struct Enemy {
     /// Place in its marching formation, relative to the target.
     pub slot: Vec2,
     pub attack: f32,
+    /// Walk cycle phase, advanced by the distance covered.
+    stride: f32,
+    /// Heading the model shows; turns smoothly toward where it is going.
+    facing: f32,
+    /// Smoothed speed compared to top speed (0 = standing).
+    pace: f32,
+    /// Archers: showing the drawn-bow model.
+    aiming: bool,
 }
 
 impl Enemy {
@@ -147,6 +161,8 @@ pub fn spawn_enemy(
 ) -> Entity {
     let st = kind.stats();
     let hp = st.hp * s.hp;
+    // Cheap per-troop randomness from the spawn spot: look and walk phase.
+    let pick = ((pos.x * 12.9898 + pos.y * 78.233).sin() * 43_758.547).fract().abs();
     let mut e = commands.spawn((
         GameEntity,
         Enemy {
@@ -165,6 +181,10 @@ pub fn spawn_enemy(
             knock: Vec2::ZERO,
             slot,
             attack: 1.0 + (pos.x.abs() % 1.5),
+            stride: pick * TAU,
+            facing: heading,
+            pace: 0.0,
+            aiming: false,
         },
         Transform::from_translation(w3(pos, 0.0)).with_rotation(yaw(heading)),
         Visibility::Visible,
@@ -175,7 +195,9 @@ pub fn spawn_enemy(
         let model = assets.bosses[&kind].clone();
         e.with_children(|p| model.spawn_parts(p, ()));
     } else {
-        e.insert((Mesh3d(assets.enemies[&kind].clone()), MeshMaterial3d(assets.m.vc.clone())));
+        let looks = &assets.enemies[&kind];
+        let mesh = looks[(pick * looks.len() as f32) as usize % looks.len()].clone();
+        e.insert((Mesh3d(mesh), MeshMaterial3d(assets.m.vc.clone())));
     }
     e.id()
 }
@@ -220,7 +242,7 @@ fn enemy_move(
     stats: Res<Stats>,
     loadout: Res<Loadout>,
     castle: Query<(&Transform, &Castle), Without<Enemy>>,
-    mut enemies: Query<(Entity, &mut Transform, &mut Enemy, &mut MeshMaterial3d<StandardMaterial>), Without<Boss>>,
+    mut enemies: Query<(Entity, &mut Transform, &mut Enemy, &mut Mesh3d, &mut MeshMaterial3d<StandardMaterial>), Without<Boss>>,
 ) {
     let Ok((ctf, c)) = castle.single() else {
         return;
@@ -228,9 +250,12 @@ fn enemy_move(
     let ci = castle_info(ctf, c, &stats, &loadout);
     let dt = time.delta_secs();
     let (flash_mat, base_mat) = (&assets.m.flash, &assets.m.vc);
+    let (archer_walk, archer_aim) = (&assets.enemies[&EnemyKind::Archer][0], &assets.archer_aim);
     let knock_decay = (-5.0 * dt).exp();
+    let turn_rate = 1.0 - (-10.0 * dt).exp();
+    let pace_rate = 1.0 - (-8.0 * dt).exp();
 
-    enemies.par_iter_mut().for_each(|(entity, mut tf, mut en, mut mat)| {
+    enemies.par_iter_mut().for_each(|(entity, mut tf, mut en, mut mesh, mut mat)| {
         let pos = p2(tf.translation);
         let to = ci.pos - pos;
         let dist = to.length().max(0.001);
@@ -284,9 +309,22 @@ fn enemy_move(
         }
         let lim = MAP_HALF - 2.0;
         next = next.clamp(Vec2::splat(-lim), Vec2::splat(lim));
-        tf.translation = w3(next, 0.0);
-        let face = if en.vel.length_squared() > 0.01 { en.vel } else { to };
-        tf.rotation = yaw(face.to_angle());
+        let moved = next.distance(pos);
+
+        // Archers in range stand and draw their bows, facing the castle.
+        let aim = en.kind == EnemyKind::Archer && dist < ARCHER_RANGE;
+        if aim != en.aiming {
+            en.aiming = aim;
+            mesh.0 = if aim { archer_aim.clone() } else { archer_walk.clone() };
+        }
+        let want = if aim || en.touching || en.vel.length_squared() < 0.01 { to } else { en.vel };
+        let turn = (want.to_angle() - en.facing + PI).rem_euclid(TAU) - PI;
+        en.facing += turn * turn_rate;
+        let pace = (moved / dt.max(1e-4) / en.speed).min(1.0);
+        en.pace += (pace - en.pace) * pace_rate;
+        let (lift, tilt) = animate(&mut en, moved, dt);
+        tf.translation = w3(next, lift);
+        tf.rotation = yaw(en.facing) * tilt;
 
         en.flash = (en.flash - dt).max(0.0);
         let want = en.flash > 0.0;
@@ -294,7 +332,110 @@ fn enemy_move(
             en.flashing = want;
             mat.0 = if want { flash_mat.clone() } else { base_mat.clone() };
         }
+        // Squash a little when hit.
+        let k = (en.flash / 0.09).clamp(0.0, 1.0);
+        tf.scale = Vec3::new(1.0 + 0.12 * k, 1.0 - 0.14 * k, 1.0 + 0.12 * k);
     });
+}
+
+/// Walk, gallop and rumble cycles, and the hacking motion against the walls.
+/// Only moves the whole model (feet stay the pivot), so it costs next to nothing.
+/// Returns the height to lift the model and the tilt to apply after its heading.
+fn animate(en: &mut Enemy, moved: f32, dt: f32) -> (f32, Quat) {
+    let p = en.pace;
+    // (lift, lean forward, roll sideways)
+    let (lift, lean, roll) = if en.touching {
+        en.stride += dt * if en.kind == EnemyKind::Knight { 6.0 } else { 8.0 };
+        let hit = en.stride.sin().max(0.0);
+        match en.kind {
+            // The horse rears up and stamps.
+            EnemyKind::Knight => (0.1 * hit, -0.18 * hit, 0.0),
+            EnemyKind::Cart => (0.0, 0.05 * hit, 0.0),
+            // Lunging and hacking at the walls.
+            _ => (0.0, 0.25 * hit, 0.0),
+        }
+    } else {
+        match en.kind {
+            EnemyKind::Knight => {
+                en.stride += moved * 1.6;
+                (0.14 * (0.5 + 0.5 * en.stride.sin()) * p, 0.09 * en.stride.cos() * p, 0.0)
+            }
+            EnemyKind::Cart => {
+                en.stride += moved * 4.0;
+                (0.025 * en.stride.sin().abs() * p, 0.0, 0.03 * (en.stride * 0.37).sin() * p)
+            }
+            _ => {
+                en.stride += moved * 1.45;
+                (0.08 * en.stride.sin().abs() * p, 0.09 * p, 0.07 * en.stride.sin() * p)
+            }
+        }
+    };
+    // Wrap the phase without a jump (0.37 * 100 is a whole number of turns).
+    en.stride = en.stride.rem_euclid(TAU * 100.0);
+    (lift, Quat::from_rotation_z(-lean) * Quat::from_rotation_x(roll))
+}
+
+/// A fallen troop: topples over, lies still for a moment, then sinks away.
+#[derive(Component)]
+pub struct Corpse {
+    age: f32,
+    /// Axis it falls around and how far it tips over.
+    axis: Vec3,
+    tip: f32,
+    /// Raised a little as it lies down, so it rests on the ground instead of in it.
+    lift: f32,
+    /// How deep it sinks before it is gone.
+    depth: f32,
+    /// Slide from the blow that killed it.
+    slide: Vec3,
+    upright: Quat,
+}
+
+/// Leaves the body of a dead troop behind, in the same spot and pose.
+pub fn spawn_corpse(commands: &mut Commands, assets: &GameAssets, en: &Enemy, tf: &Transform, mesh: &Mesh3d) {
+    // Knocked flat by the blow, or falling backward and a bit to one side.
+    let back = Vec2::from_angle(en.facing + PI + en.stride.sin() * 0.9);
+    let fall = if en.knock.length_squared() > 4.0 { en.knock.normalize() } else { back };
+    let (tip, lift, depth, mat) = match en.kind {
+        EnemyKind::Cart => (0.22, 0.0, 2.6, assets.m.charred.clone()),
+        EnemyKind::Knight => (1.35, 0.32, 1.4, assets.m.vc.clone()),
+        _ => (1.45, 0.22, 1.1, assets.m.vc.clone()),
+    };
+    commands.spawn((
+        GameEntity,
+        Corpse {
+            age: 0.0,
+            axis: Vec3::Y.cross(w3(fall, 0.0)).normalize_or(Vec3::Z),
+            tip,
+            lift,
+            depth,
+            slide: w3(en.knock * 0.35 + fall * 1.2, 0.0),
+            upright: yaw(en.facing),
+        },
+        mesh.clone(),
+        MeshMaterial3d(mat),
+        Transform::from_translation(tf.translation.with_y(0.0)).with_rotation(yaw(en.facing)),
+    ));
+}
+
+fn corpses(mut commands: Commands, time: Res<Time>, mut bodies: Query<(Entity, &mut Transform, &mut Corpse)>) {
+    let dt = time.delta_secs();
+    for (e, mut tf, mut c) in &mut bodies {
+        c.age += dt;
+        // Falls like a plank, slow at first and then faster, with a small bounce.
+        let f = (c.age / 0.42).min(1.0);
+        let settle = (c.age - 0.42).max(0.0);
+        let bounce = if settle > 0.0 { (settle * 22.0).sin().abs() * (-settle * 9.0).exp() * 0.12 } else { 0.0 };
+        tf.rotation = Quat::from_axis_angle(c.axis, c.tip * f * f - bounce) * c.upright;
+        let slide = c.slide;
+        tf.translation += slide * dt;
+        c.slide *= (-5.0 * dt).exp();
+        let sink = ((c.age - 1.1) / 0.9).clamp(0.0, 1.0);
+        tf.translation.y = c.lift * f - sink * sink * c.depth;
+        if c.age > 2.0 {
+            commands.entity(e).despawn();
+        }
+    }
 }
 
 fn archer_fire(
@@ -315,7 +456,7 @@ fn archer_fire(
         }
         en.attack -= dt;
         let pos = p2(tf.translation);
-        if en.attack > 0.0 || pos.distance(cpos) > 21.0 {
+        if en.attack > 0.0 || pos.distance(cpos) > ARCHER_RANGE {
             continue;
         }
         en.attack = 2.8;
