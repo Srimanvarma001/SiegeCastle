@@ -101,15 +101,33 @@ the boss). Add `SIEGE_AUTOPILOT=1` to let the castle drive itself.
 - [x] Burning ground hazard, fire pots, boulders that crush troops
 - [x] README boss table
 
+## Checked on October 30, 2026
+
+- Builds with no warnings; one clippy finding fixed.
+- Each boss run alone for 25 s on the Iris Xe laptop (this branch, shadows
+  on): 13-41 FPS after the first seconds, no crash. The 2-3 FPS seen before
+  came from a build running at the same time. On `main` (no shadows) it is
+  33-63 FPS, and a full run kept 31-72 FPS with up to 788 troops.
+- The camera does pull back, but the Siege Tower's top and the Warlord's
+  spire ran off the top of the screen. The framing now projects the boss's
+  top through the real camera and rises until it fits below the HUD.
+- Fights were too short: in a full autopilot run (2x clock, god mode) the
+  bosses fell in 20-40 s. Base health raised: Siege Tower 1400 -> 2800,
+  War Wagons 800 -> 2000, Juggernaut 2600 -> 5200, Trebuchet 3000 -> 10000,
+  Warlord 7500 -> 20000.
+- Warning rings stand out clearly on grass and roads.
+- Boss parts now only update their transform when it changes (less work for
+  Bevy's transform propagation every frame).
+
 ## Still to do
 
-- [ ] Build again after the last cleanup (two unused helpers removed) and
+- [x] Build again after the last cleanup (two unused helpers removed) and
       fix any errors or clippy findings
-- [ ] Measure FPS with each boss on the Intel Iris Xe laptop. The one test
+- [x] Measure FPS with each boss on the Intel Iris Xe laptop. The one test
       run showed 2 to 3 FPS, but a build was using all CPU cores at the same
       time. If slow: turn off shadows on boss parts, merge static parts,
       lower wall and tower detail
-- [ ] Check the camera pulls back in a normal game (it did not in the one
+- [x] Check the camera pulls back in a normal game (it did not in the one
       test run, most likely because of the low frame rate)
 - [ ] Play each boss and check:
   - [ ] 1. Siege Tower: ramp drops and squads walk out, archer volleys,
@@ -122,9 +140,9 @@ the boss). Add `SIEGE_AUTOPILOT=1` to let the castle drive itself.
         treadwheels spin on reload, cluster stones when hurt, ballistas
   - [ ] 5. Warlord: turrets, portcullis and knights, bombard cross,
         trample charge, burning spire and fire rain in the last phase
-- [ ] Tune boss health, damage and cooldowns so each fight lasts about a
+- [x] Tune boss health, damage and cooldowns so each fight lasts about a
       minute or two
-- [ ] Check warning circles and lanes are easy to see on grass and roads
+- [x] Check warning circles and lanes are easy to see on grass and roads
 - [ ] Merge with the uncommitted graphics work on `main`. Expect conflicts in
       `src/world.rs` (camera and haze), `src/enemy.rs` and `src/main.rs`
 - [ ] New `docs/bosses.png` screenshot for the README

@@ -213,7 +213,7 @@ impl Boss {
             phase: 0,
             dir: Vec2::from_angle(heading),
             step: 0,
-            side: if index % 2 == 0 { 1.0 } else { -1.0 },
+            side: if index.is_multiple_of(2) { 1.0 } else { -1.0 },
             chain: 0,
             heading,
             speed: 0.0,
@@ -436,9 +436,12 @@ fn animate_rigs(
                     off = rot * Vec3::new(-p.recoil[0] * part.k, 0.0, 0.0);
                 }
             }
-            tf.translation = rest.translation + off;
-            tf.rotation = rest.rotation * rot;
-            tf.scale = scale;
+            // Only write when the pose changed: a written transform makes Bevy
+            // recompute the part and every mesh under it, even if nothing moved.
+            let want = Transform { translation: rest.translation + off, rotation: rest.rotation * rot, scale };
+            if *tf != want {
+                *tf = want;
+            }
         }
     }
 }
@@ -454,6 +457,27 @@ pub struct BossCam {
     pub zoom: f32,
     /// Shift of the camera's focus from the castle toward the boss.
     pub offset: Vec2,
+}
+
+/// Height of the game camera above its focus before any zoom (see `world::follow_camera`).
+const CAMERA_BASE: f32 = crate::world::CAMERA_HEIGHT;
+/// The camera never rises above this many times `CAMERA_BASE` for a boss.
+const MAX_ZOOM: f32 = 3.4;
+
+/// Whether `p` shows on screen, clear of the HUD at the top, when the game
+/// camera is `h` above `focus`. Matches `world::follow_camera`: the camera sits
+/// 0.42h behind its focus, looks at it, and has a 32° vertical field of view.
+fn on_screen(h: f32, focus: Vec2, p: Vec3) -> bool {
+    let look = w3(focus, 0.0);
+    let cam = Transform::from_translation(look + Vec3::new(0.0, h, h * 0.42)).looking_at(look, Vec3::Y);
+    let v = cam.compute_affine().inverse().transform_point3(p);
+    if v.z > -1.0 {
+        return false;
+    }
+    let t = (16f32).to_radians().tan();
+    let (x, y) = (v.x / -v.z / (t * 16.0 / 9.0), v.y / -v.z / t);
+    // The bars across the top cover about a fifth of the screen.
+    x.abs() < 0.92 && (-0.9..0.62).contains(&y)
 }
 
 fn frame_bosses(
@@ -478,11 +502,16 @@ fn frame_bosses(
         let weight = weight * weight * (3.0 - 2.0 * weight);
         let offset = (target - cpos) * 0.42;
         let focus = cpos + offset;
-        // Visible half-sizes at camera height h are about 0.55h wide and 0.34h tall.
-        let dx = (target.x - focus.x).abs().max((cpos.x - focus.x).abs()) + 12.0;
-        let dy = (target.y - focus.y).abs().max((cpos.y - focus.y).abs()) + 10.0;
-        let need = (dx / 0.55).max(dy / 0.34).max(spec(en.kind).height + 30.0) / crate::world::CAMERA_HEIGHT;
-        let zoom = 1.0 + (need.min(3.4) - 1.0).max(0.0) * weight;
+        // Raise the camera until the castle, the near part of the boss and the
+        // top of the boss are all on screen. Tall bosses need this: seen from
+        // above, their top lands much further out than their base.
+        let points = [w3(cpos, 4.0), w3(target, 0.0), w3(pos, spec(en.kind).height)];
+        let mut h = CAMERA_BASE;
+        while h < CAMERA_BASE * MAX_ZOOM && !points.iter().all(|&p| on_screen(h, focus, p)) {
+            h += 2.0;
+        }
+        let need = h / CAMERA_BASE;
+        let zoom = 1.0 + (need.min(MAX_ZOOM) - 1.0).max(0.0) * weight;
         if best.is_none_or(|b| zoom > b.0) {
             best = Some((zoom, weight, offset * weight));
         }
