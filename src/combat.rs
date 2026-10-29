@@ -2,7 +2,7 @@
 
 use crate::art::{p2, w3};
 use crate::assets::GameAssets;
-use crate::enemy::{spawn_corpse, Boss, Corpse, Enemy, EnemyKind, MAX_CORPSES};
+use crate::enemy::{spawn_corpse, Boss, Corpse, Enemy, EnemyKind};
 use crate::grid::{Grid, MAX_ENEMY_RADIUS};
 use crate::items::Stats;
 use crate::player::Castle;
@@ -352,7 +352,7 @@ pub fn enemy_deaths(
             explosion(&mut commands, &assets, &mut rng, pos, 2.0);
         }
         if let Some(mesh) = mesh
-            && corpse_count < MAX_CORPSES
+            && corpse_count < crate::vfx::max_corpses()
         {
             corpse_count += 1;
             spawn_corpse(&mut commands, &assets, en, tf, mesh);

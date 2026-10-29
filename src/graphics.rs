@@ -232,6 +232,12 @@ fn apply(
     });
     info!("graphics: {:?} scale={} aa={aa} bloom={}", gfx.preset, s.scale, s.bloom);
     gfx.scale = s.scale;
+    // Fewer flash lights, effects and bodies on the lighter presets.
+    crate::vfx::set_detail(match gfx.preset {
+        Preset::Low => 0,
+        Preset::Medium => 1,
+        Preset::High => 2,
+    });
     for e in &cams {
         let mut cam = commands.entity(e);
         match s.smaa {

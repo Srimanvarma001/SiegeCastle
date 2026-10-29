@@ -117,11 +117,11 @@ Everything is generated in code, with no art files to download:
 - **Caps:** at most 2200 troops and 900 coins at once. In endless mode enemies keep getting stronger past the cap, and extra XP goes straight to you.
 - **Graphics presets:** the game picks Low, Medium or High from your GPU (F9 switches). Medium and Low draw the 3D world at 80% or 67% of the window resolution and stretch it to fit, while the HUD stays at full sharpness. Integrated graphics start on Medium.
 
-| Preset | 3D resolution | Anti-aliasing | Bloom |
-|---|---|---|---|
-| High | 100% | SMAA high | on |
-| Medium | 80% | SMAA medium | on |
-| Low | 67% | SMAA low | off |
+| Preset | 3D resolution | Anti-aliasing | Bloom | Effects |
+|---|---|---|---|---|
+| High | 100% | SMAA high | on | up to 3200 effects, 10 flash lights, 160 fallen troops |
+| Medium | 80% | SMAA medium | on | up to 2200 effects, 6 flash lights, 110 fallen troops |
+| Low | 67% | SMAA low | off | up to 1200 effects (some smoke and sparks left out), 3 flash lights, 60 fallen troops |
 
 ## Code layout
 

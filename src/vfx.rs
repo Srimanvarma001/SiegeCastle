@@ -25,14 +25,38 @@ impl Plugin for VfxPlugin {
     }
 }
 
-/// Effects alive last frame. Above `MAX_FX`, purely cosmetic extras are skipped.
+/// Effects alive last frame. Above `max_fx()`, purely cosmetic extras are skipped.
 static LIVE: AtomicUsize = AtomicUsize::new(0);
 /// Flash lights alive (each one costs real lighting work).
 static LIGHTS: AtomicUsize = AtomicUsize::new(0);
 static SEED: AtomicU32 = AtomicU32::new(0x9e37_79b9);
 
-const MAX_FX: usize = 3200;
-const MAX_LIGHTS: usize = 10;
+/// Effect detail from the graphics preset: 0 = Low, 1 = Medium, 2 = High.
+static DETAIL: AtomicUsize = AtomicUsize::new(2);
+
+/// Sets the effect detail for a graphics preset (see `graphics::apply`).
+pub fn set_detail(level: usize) {
+    DETAIL.store(level.min(2), Ordering::Relaxed);
+}
+
+fn detail() -> usize {
+    DETAIL.load(Ordering::Relaxed)
+}
+
+/// Most effects alive at once before cosmetic ones are skipped.
+fn max_fx() -> usize {
+    [1200, 2200, 3200][detail()]
+}
+
+/// Most flash lights at once; each one costs real lighting work.
+fn max_lights() -> usize {
+    [3, 6, 10][detail()]
+}
+
+/// Most fallen troops lying around at once.
+pub fn max_corpses() -> usize {
+    [60, 110, crate::enemy::MAX_CORPSES][detail()]
+}
 
 /// Cheap random number in 0..1, for variety in effects.
 pub fn rnd() -> f32 {
@@ -396,7 +420,8 @@ fn flat(pos: Vec3, scale: Vec3, angle: f32) -> Transform {
 }
 
 pub fn spawn_fx(commands: &mut Commands, assets: &GameAssets, kind: FxKind, pos: Vec3, size: f32, vel: Vec3) -> Entity {
-    if kind.cosmetic() && LIVE.load(Ordering::Relaxed) > MAX_FX {
+    // On Low, also leave out some of the purely cosmetic puffs and sparks.
+    if kind.cosmetic() && (LIVE.load(Ordering::Relaxed) > max_fx() || (detail() == 0 && rnd() < 0.4)) {
         return skipped(commands);
     }
     let v = &assets.vfx;
@@ -440,7 +465,7 @@ pub fn spawn_fx(commands: &mut Commands, assets: &GameAssets, kind: FxKind, pos:
             (&v.quad, &v.muzzle, sprite(pos, size, fx.spin))
         }
         FxKind::Flash => {
-            if LIGHTS.load(Ordering::Relaxed) >= MAX_LIGHTS {
+            if LIGHTS.load(Ordering::Relaxed) >= max_lights() {
                 return skipped(commands);
             }
             LIGHTS.fetch_add(1, Ordering::Relaxed);

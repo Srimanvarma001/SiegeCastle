@@ -15,7 +15,8 @@ pub use crate::boss::Boss;
 
 /// Archers shoot at the castle from this far away.
 const ARCHER_RANGE: f32 = 21.0;
-/// At most this many fallen troops lie around at once.
+/// At most this many fallen troops lie around at once on the High preset
+/// (fewer on Medium and Low, see `vfx::max_corpses`).
 pub const MAX_CORPSES: usize = 160;
 
 pub struct EnemyPlugin;
