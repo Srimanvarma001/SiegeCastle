@@ -1,7 +1,9 @@
 //! The player's castle: car-like driving, nitro, health, looks and growth.
 
+use crate::anim::spawn_pieces;
 use crate::art::{castle_mounts, p2, w3, yaw, Variant};
 use crate::assets::GameAssets;
+use crate::models::Role;
 use crate::combat::{damage_area, explosion, spawn_fx, spawn_fx_rot, FxKind};
 use crate::enemy::Enemy;
 use crate::grid::Grid;
@@ -61,6 +63,15 @@ pub struct CastlePart;
 /// A mounted weapon model; its world position is where shots come from.
 #[derive(Component)]
 pub struct ModuleMount(pub ModuleKind);
+
+/// Every mounted weapon model, including the mirrored side cannons
+/// (used for animation; `ModuleMount` is only on the one that shoots).
+#[derive(Component)]
+pub struct MountOf(pub ModuleKind);
+
+/// Holds everything above the wheels, so the body can lean and bounce.
+#[derive(Component)]
+pub struct CastleBody;
 
 /// Steering for this frame, from the keyboard or the test autopilot.
 #[derive(Resource, Default)]
@@ -253,33 +264,45 @@ fn rebuild_castle(
     let variant = if loadout.stage == 0 { Variant::Base } else { loadout.variant };
     let mounts = castle_mounts(loadout.stage);
     let scale = 1.0 + loadout.stage as f32 * 0.25;
-    let body = assets.castle[&(loadout.stage, variant)].clone();
-    let modules = assets.modules.clone();
+    let rig = assets.castle_rigs[&(loadout.stage, variant)].clone();
+    let modules = assets.module_rigs.clone();
     let owned = loadout.modules.clone();
+    let is_wheel = |r: Role| matches!(r, Role::Wheel { .. });
     commands.entity(e).despawn_related::<Children>().with_children(|p| {
-        body.spawn_parts(p, CastlePart);
-        let mut tops = mounts.top.iter();
-        for m in &owned {
-            let at = match m.kind.mount() {
-                Mount::Top => *tops.next().unwrap_or(&mounts.top[0]),
-                Mount::Front => mounts.front,
-                Mount::Back => mounts.back,
-                Mount::Side => mounts.side,
-            };
-            let model = modules[&m.kind].clone();
-            p.spawn((CastlePart, ModuleMount(m.kind), Transform::from_translation(at).with_scale(Vec3::splat(scale)), Visibility::Inherited))
-                .with_children(|q| model.spawn_parts(q, ()));
-            if m.kind.mount() == Mount::Side {
-                // Guns on the other side too, facing out.
-                let mirror = Vec3::new(at.x, at.y, -at.z);
-                p.spawn((
-                    CastlePart,
-                    Transform::from_translation(mirror).with_rotation(Quat::from_rotation_y(std::f32::consts::PI)).with_scale(Vec3::splat(scale)),
-                    Visibility::Inherited,
-                ))
-                .with_children(|q| model.spawn_parts(q, ()));
+        // Wheels stay on the ground; the body above them sways.
+        spawn_pieces(p, &rig.parts, e, is_wheel);
+        p.spawn((CastlePart, CastleBody, Transform::IDENTITY, Visibility::Inherited)).with_children(|b| {
+            rig.body.spawn_parts(b, CastlePart);
+            spawn_pieces(b, &rig.parts, e, |r| !is_wheel(r));
+            let mut tops = mounts.top.iter();
+            for m in &owned {
+                let at = match m.kind.mount() {
+                    Mount::Top => *tops.next().unwrap_or(&mounts.top[0]),
+                    Mount::Front => mounts.front,
+                    Mount::Back => mounts.back,
+                    Mount::Side => mounts.side,
+                };
+                let model = modules[&m.kind].clone();
+                let place = Transform::from_translation(at).with_scale(Vec3::splat(scale));
+                b.spawn((CastlePart, ModuleMount(m.kind), MountOf(m.kind), place, Visibility::Inherited)).with_children(|q| {
+                    model.body.spawn_parts(q, ());
+                    let owner = q.target_entity();
+                    spawn_pieces(q, &model.parts, owner, |_| true);
+                });
+                if m.kind.mount() == Mount::Side {
+                    // Guns on the other side too, facing out.
+                    let mirror = Vec3::new(at.x, at.y, -at.z);
+                    let place = Transform::from_translation(mirror)
+                        .with_rotation(Quat::from_rotation_y(std::f32::consts::PI))
+                        .with_scale(Vec3::splat(scale));
+                    b.spawn((CastlePart, MountOf(m.kind), place, Visibility::Inherited)).with_children(|q| {
+                        model.body.spawn_parts(q, ());
+                        let owner = q.target_entity();
+                        spawn_pieces(q, &model.parts, owner, |_| true);
+                    });
+                }
             }
-        }
+        });
     });
 }
 

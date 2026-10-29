@@ -1,6 +1,6 @@
-//! Shots, explosions, mines, enemy deaths, coins and visual effects.
+//! Shots, explosions, mines, enemy deaths and coins. Effects live in `vfx.rs`.
 
-use crate::art::{p2, w3, yaw};
+use crate::art::{p2, w3};
 use crate::assets::GameAssets;
 use crate::enemy::{spawn_corpse, Boss, Corpse, Enemy, EnemyKind, MAX_CORPSES};
 use crate::grid::{Grid, MAX_ENEMY_RADIUS};
@@ -9,7 +9,8 @@ use crate::player::Castle;
 use crate::progression::Progress;
 use crate::{GameEntity, GameRng, RunStats, Shake, Sim};
 use bevy::prelude::*;
-use rand::Rng;
+
+pub use crate::vfx::{explosion, spawn_fx, spawn_fx_rot, FxKind};
 
 /// Above this many coins on the ground, XP goes straight to the castle.
 const MAX_COINS: usize = 900;
@@ -20,7 +21,7 @@ impl Plugin for CombatPlugin {
     fn build(&self, app: &mut App) {
         app.add_message::<BossDefeated>()
             .add_systems(Update, (update_arcs, update_bullets, update_mines).in_set(Sim::Combat))
-            .add_systems(Update, (enemy_deaths, collect_coins, update_fx).chain().in_set(Sim::Resolve));
+            .add_systems(Update, (enemy_deaths, collect_coins).chain().in_set(Sim::Resolve));
     }
 }
 
@@ -306,20 +307,6 @@ fn damage_troops(grid: &Grid, enemies: &mut Query<&mut Enemy>, pos: Vec2, radius
     });
 }
 
-/// Fireball, smoke, flying debris and a scorch mark.
-pub fn explosion(commands: &mut Commands, assets: &GameAssets, rng: &mut GameRng, pos: Vec2, radius: f32) {
-    spawn_fx(commands, assets, FxKind::Fireball, w3(pos, 0.8), radius * 1.6, Vec3::ZERO);
-    for _ in 0..4 {
-        let off = Vec3::new(rng.0.random_range(-1.0..1.0), 0.0, rng.0.random_range(-1.0..1.0)) * radius * 0.5;
-        spawn_fx(commands, assets, FxKind::Smoke, w3(pos, 1.0) + off, radius * 0.7, Vec3::Y * 2.0 + off * 0.8);
-    }
-    for _ in 0..5 {
-        let v = Vec3::new(rng.0.random_range(-1.0..1.0), rng.0.random_range(1.0..2.0), rng.0.random_range(-1.0..1.0)) * 7.0;
-        spawn_fx(commands, assets, FxKind::Debris, w3(pos, 0.6), 0.35, v);
-    }
-    spawn_fx(commands, assets, FxKind::Scorch, w3(pos, 0.03), radius * 1.4, Vec3::ZERO);
-}
-
 // ---------------------------------------------------------------------------
 // Deaths and coins
 // ---------------------------------------------------------------------------
@@ -329,7 +316,7 @@ pub struct Coin {
     xp: f32,
 }
 
-fn enemy_deaths(
+pub fn enemy_deaths(
     mut commands: Commands,
     assets: Res<GameAssets>,
     mut rng: ResMut<GameRng>,
@@ -437,139 +424,5 @@ fn collect_coins(
         }
         tf.translation = w3(next, 0.6 + (t * 3.0 + pos.x).sin() * 0.15);
         tf.rotation = Quat::from_rotation_y(t * 3.0 + pos.y);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Effects
-// ---------------------------------------------------------------------------
-
-#[derive(Clone, Copy, PartialEq, Debug)]
-pub enum FxKind {
-    Fireball,
-    Smoke,
-    DarkSmoke,
-    Spark,
-    Debris,
-    Scorch,
-    Blood,
-    Track,
-    Dirt,
-    Telegraph { dur: f32 },
-    /// A faint red disc under a telegraph ring.
-    Zone { dur: f32 },
-    /// A red strip on the ground (charges, broadsides). Sized by its spawner.
-    Lane { dur: f32 },
-    /// A ring of dust racing outward.
-    Shockwave,
-}
-
-#[derive(Component)]
-pub struct Fx {
-    kind: FxKind,
-    life: f32,
-    max: f32,
-    vel: Vec3,
-    size: f32,
-}
-
-pub fn spawn_fx(commands: &mut Commands, assets: &GameAssets, kind: FxKind, pos: Vec3, size: f32, vel: Vec3) -> Entity {
-    let m = &assets.m;
-    let (mesh, mat, life, scale) = match kind {
-        FxKind::Fireball => (&assets.ball, &m.fire, 0.35, Vec3::splat(size * 0.4)),
-        FxKind::Smoke => (&assets.ball, &m.smoke, 1.4, Vec3::splat(size * 0.5)),
-        FxKind::DarkSmoke => (&assets.ball, &m.smoke_dark, 1.6, Vec3::splat(size * 0.5)),
-        FxKind::Spark => (&assets.ball, &m.spark, 0.25, Vec3::splat(size)),
-        FxKind::Debris => (&assets.cube, &m.debris, 1.0, Vec3::splat(size)),
-        FxKind::Scorch => (&assets.disc, &m.scorch, 9.0, Vec3::new(size, 0.02, size)),
-        FxKind::Blood => (&assets.disc, &m.blood, 6.0, Vec3::new(size, 0.02, size)),
-        FxKind::Track => (&assets.rut, &m.track, 7.0, Vec3::new(size * 2.4, 1.0, size * 1.4)),
-        FxKind::Dirt => (&assets.cube, &m.dirt, 60.0, Vec3::new(size, 0.03, size * 0.8)),
-        FxKind::Telegraph { dur } => (&assets.ring, &m.telegraph, dur, Vec3::splat(size * 0.2)),
-        FxKind::Zone { dur } => (&assets.disc, &m.warn, dur, Vec3::new(size * 2.0, 0.03, size * 2.0)),
-        FxKind::Lane { dur } => (&assets.cube, &m.warn, dur, Vec3::ONE),
-        FxKind::Shockwave => (&assets.ring, &m.smoke, 0.55, Vec3::splat(size * 0.2)),
-    };
-    commands
-        .spawn((
-            GameEntity,
-            Fx { kind, life, max: life, vel, size },
-            Mesh3d(mesh.clone()),
-            MeshMaterial3d(mat.clone()),
-            Transform::from_translation(pos).with_scale(scale),
-        ))
-        .id()
-}
-
-/// Same as `spawn_fx` but facing a direction (used for tracks).
-pub fn spawn_fx_rot(commands: &mut Commands, assets: &GameAssets, kind: FxKind, pos: Vec3, size: f32, angle: f32) -> Entity {
-    let e = spawn_fx(commands, assets, kind, pos, size, Vec3::ZERO);
-    commands.entity(e).entry::<Transform>().and_modify(move |mut t| t.rotation = yaw(angle));
-    e
-}
-
-fn update_fx(
-    mut commands: Commands,
-    time: Res<Time>,
-    assets: Res<GameAssets>,
-    mut q: Query<(Entity, &mut Transform, &mut Fx, &mut MeshMaterial3d<StandardMaterial>)>,
-) {
-    let dt = time.delta_secs();
-    for (e, mut tf, mut fx, mut mat) in &mut q {
-        fx.life -= dt;
-        if fx.life <= 0.0 {
-            commands.entity(e).despawn();
-            continue;
-        }
-        let age = 1.0 - fx.life / fx.max;
-        let s = fx.size;
-        match fx.kind {
-            FxKind::Fireball => {
-                let k = if age < 0.35 { 0.4 + age / 0.35 * 0.6 } else { 1.0 - (age - 0.35) / 0.65 };
-                tf.scale = Vec3::splat(s * k.max(0.01));
-            }
-            FxKind::Smoke | FxKind::DarkSmoke => {
-                tf.translation += fx.vel * dt;
-                fx.vel *= (-1.5 * dt).exp();
-                // Puffs swell as they rise and fade out.
-                tf.scale = Vec3::splat(s * (0.5 + age * 1.1));
-                let fades = if fx.kind == FxKind::Smoke { &assets.m.smoke_fade } else { &assets.m.smoke_dark_fade };
-                let i = ((age * fades.len() as f32) as usize).min(fades.len() - 1);
-                if mat.0 != fades[i] {
-                    mat.0 = fades[i].clone();
-                }
-            }
-            FxKind::Spark => tf.scale = Vec3::splat(s * (1.0 - age).max(0.01)),
-            FxKind::Debris => {
-                fx.vel.y -= 22.0 * dt;
-                tf.translation += fx.vel * dt;
-                if tf.translation.y < 0.1 {
-                    tf.translation.y = 0.1;
-                    fx.vel = Vec3::ZERO;
-                }
-                tf.rotate_x(dt * 8.0);
-                tf.scale = Vec3::splat(s * (1.0 - age * age).max(0.01));
-            }
-            FxKind::Scorch | FxKind::Blood | FxKind::Track | FxKind::Dirt => {
-                // Shrink away during the last quarter of life.
-                let k = ((1.0 - age) / 0.25).min(1.0);
-                let base = if fx.kind == FxKind::Track { Vec3::new(s * 2.0, 0.02, s) } else { Vec3::new(s, 0.02, s) };
-                tf.scale = Vec3::new(base.x * k.max(0.01), base.y, base.z * k.max(0.01));
-            }
-            FxKind::Telegraph { .. } => {
-                let k = 0.2 + age * 0.8;
-                tf.scale = Vec3::new(s * k, 0.6, s * k);
-            }
-            FxKind::Zone { .. } | FxKind::Lane { .. } => {}
-            FxKind::Shockwave => {
-                let k = 0.25 + age.sqrt() * 0.85;
-                tf.scale = Vec3::new(s * k, 2.5 * (1.0 - age) + 0.2, s * k);
-                let fades = &assets.m.smoke_fade;
-                let i = ((age * fades.len() as f32) as usize).min(fades.len() - 1);
-                if mat.0 != fades[i] {
-                    mat.0 = fades[i].clone();
-                }
-            }
-        }
     }
 }

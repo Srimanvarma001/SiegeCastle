@@ -96,7 +96,15 @@ Everything is generated in code, with no art files to download:
 - **Weapons:** a bronze cannon on a spoked-wheel carriage, a torsion ballista, archers drawing longbows on a covered hoarding, a bronze mortar, and a covered battering ram.
 - **Cards:** velvet-and-gold level-up cards (crimson for weapons, sapphire for artifacts, emerald for castle growth) showing real 3D renders of each item, made in an off-screen studio at startup.
 - **Lighting:** a warm late-afternoon sun, cool sky light, distance haze, bloom on fire, and SMAA anti-aliasing. There are no shadows, which keeps it fast on laptop graphics.
-- **UI:** Cinzel titles and EB Garamond text (both under the SIL Open Font License, see `assets/fonts/`).
+- **Effects:** soft smoke, dust and fire sprites painted at startup, flashes of light that briefly light up the ground, shockwave rings, sparks and embers, muzzle blasts, smoke trails behind cannonballs and shells, blood splatter and scorch marks that fade away, and wheel ruts behind the castle.
+- **UI:** Cinzel titles and EB Garamond text (both under the SIL Open Font License, see `assets/fonts/`). Leather-and-bronze panels, glossy bars that leave a pale trail when you take damage, a clock-hand sweep on ability cooldowns, a level ring that pops on level-up, cards that rise into place and lift when hovered, and screen edges that flush red when the walls are hit.
+
+## How it moves
+
+- **Castle:** wheels roll with your speed, the body leans into turns, squats when you speed up, rocks and sheds stone chips when hit, and kicks up dust. Flags wave.
+- **Weapons:** the ballista, bombard and archers turn to track their target. Barrels slam back when they fire, the ballista bolt vanishes and is winched back in, and the ram log swings as you speed up and brake, then pounds back and forth while charging.
+- **Troops:** march with a stride of their own, horses gallop, carts rumble, soldiers lunge and hack at your walls, archers stop and draw their bows once in range, and everyone squashes when hit. The fallen topple over and sink away; war carts are left as charred wrecks.
+- **Bosses:** wheels, turrets, ramps, gun ports, rams and the trebuchet arm all move with each attack (see the boss table above), and each boss collapses in its own way when destroyed.
 
 ## Why it is fast
 
@@ -123,13 +131,19 @@ src/
   texgen.rs       realistic stone/slate/wood/iron/grass textures, made in code
   icons.rs        fallback UI icons
   previews.rs     3D portraits of weapons, artifacts and castles for the cards
+  studio.rs       close-up troop screenshots for testing (`SIEGE_TROOPS=1`)
   assets.rs       builds models and materials once at startup
   items.rs        modules, artifacts, castle stages, stat math
   player.rs       castle driving, nitro, health, looks, growth
   modules.rs      weapon auto-attacks and abilities
-  enemy.rs        troops, formations, the five bosses
+  enemy.rs        troops, formations, walk cycles, corpses
+  boss.rs         boss rigs, animation, camera framing, burning ground, collapse
+  boss_ai.rs      boss attacks and phases
+  boss_models.rs  the five colossal boss models
   director.rs     spawning, boss countdown, endless scaling
-  combat.rs       shots, explosions, mines, coins, effects
+  combat.rs       shots, explosions, mines, coins
+  vfx.rs          smoke, fire, sparks, flashes, debris and ground marks
+  anim.rs         moving parts of the castle and weapons, shot trails
   progression.rs  XP, levels, card choices
   world.rs        terrain, forests, water, farms, sheep, camera, sun
   graphics.rs     quality presets, render scale, the screen camera

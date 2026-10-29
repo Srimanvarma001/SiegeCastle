@@ -6,7 +6,7 @@ use crate::boss::Rig;
 use crate::enemy::EnemyKind;
 use crate::items::ModuleKind;
 use crate::boss_models;
-use crate::models::{self, Mat, Model};
+use crate::models::{self, Mat, Model, RigPart, Role};
 use crate::texgen::{self, Surface};
 use bevy::math::Affine2;
 use bevy::platform::collections::HashMap;
@@ -33,11 +33,31 @@ impl ModelHandle {
     }
 }
 
+/// A moving piece of a model, ready to spawn (see `anim::spawn_pieces`).
+#[derive(Clone)]
+pub struct PartHandle {
+    pub role: Role,
+    pub pivot: Vec3,
+    pub rest: Quat,
+    pub model: ModelHandle,
+    pub parts: Vec<PartHandle>,
+}
+
+/// A model split into its static body and its moving pieces.
+#[derive(Clone, Default)]
+pub struct RigHandle {
+    pub body: ModelHandle,
+    pub parts: Vec<PartHandle>,
+}
+
 #[derive(Resource)]
 pub struct GameAssets {
-    /// Castle per (stage, variant).
+    /// Castle per (stage, variant), all in one piece (for portraits).
     pub castle: HashMap<(usize, Variant), ModelHandle>,
+    /// The same castles with moving wheels and flags.
+    pub castle_rigs: HashMap<(usize, Variant), RigHandle>,
     pub modules: HashMap<ModuleKind, ModelHandle>,
+    pub module_rigs: HashMap<ModuleKind, RigHandle>,
     /// Troops: one vertex-colored mesh per look; a kind with several looks
     /// picks one at random so crowds don't look cloned.
     pub enemies: HashMap<EnemyKind, Vec<Handle<Mesh>>>,
@@ -45,6 +65,7 @@ pub struct GameAssets {
     pub archer_aim: Handle<Mesh>,
     /// Bosses: rigs of separately moving parts.
     pub bosses: HashMap<EnemyKind, Rig>,
+    pub vfx: crate::vfx::VfxAssets,
     pub villages: Vec<ModelHandle>,
     pub sheep: Handle<Mesh>,
     pub coin: ModelHandle,
@@ -99,14 +120,7 @@ pub struct Mats {
     /// Vertex-colored but burnt dark, for wrecked war carts.
     pub charred: Handle<StandardMaterial>,
     pub fire: Handle<StandardMaterial>,
-    pub spark: Handle<StandardMaterial>,
-    pub smoke: Handle<StandardMaterial>,
-    pub smoke_dark: Handle<StandardMaterial>,
-    pub track: Handle<StandardMaterial>,
-    pub scorch: Handle<StandardMaterial>,
-    pub dirt: Handle<StandardMaterial>,
     pub debris: Handle<StandardMaterial>,
-    pub blood: Handle<StandardMaterial>,
     pub water: Handle<StandardMaterial>,
     pub telegraph: Handle<StandardMaterial>,
     /// Faint red fill under telegraph rings and lanes.
@@ -117,9 +131,6 @@ pub struct Mats {
     pub stone: Handle<StandardMaterial>,
     pub grass: Handle<StandardMaterial>,
     pub road: Handle<StandardMaterial>,
-    /// Smoke at decreasing opacity, swapped in as a puff ages.
-    pub smoke_fade: Vec<Handle<StandardMaterial>>,
-    pub smoke_dark_fade: Vec<Handle<StandardMaterial>>,
 }
 
 /// Meters covered by one repeat of each texture.
@@ -151,6 +162,22 @@ fn textured(tex: &texgen::SurfaceTextures, tile: f32, extra: StandardMaterial) -
 
 pub fn upload(meshes: &mut Assets<Mesh>, mats: &HashMap<Mat, Handle<StandardMaterial>>, model: Model) -> ModelHandle {
     ModelHandle(model.build().into_iter().map(|(m, mesh)| (meshes.add(mesh), mats[&m].clone())).collect())
+}
+
+/// Uploads a model keeping its moving pieces separate.
+pub fn upload_rig(meshes: &mut Assets<Mesh>, mats: &HashMap<Mat, Handle<StandardMaterial>>, model: Model) -> RigHandle {
+    fn part(meshes: &mut Assets<Mesh>, mats: &HashMap<Mat, Handle<StandardMaterial>>, p: RigPart) -> PartHandle {
+        let (body, rig) = p.model.split();
+        PartHandle {
+            role: p.role,
+            pivot: p.pivot,
+            rest: p.rest,
+            model: upload(meshes, mats, body),
+            parts: rig.into_iter().map(|r| part(meshes, mats, r)).collect(),
+        }
+    }
+    let (body, rig) = model.split();
+    RigHandle { body: upload(meshes, mats, body), parts: rig.into_iter().map(|r| part(meshes, mats, r)).collect() }
 }
 
 pub fn create_assets(
@@ -222,13 +249,19 @@ pub fn create_assets(
     }
 
     let mut castle = HashMap::default();
-    castle.insert((0, Variant::Base), upload(&mut meshes, &mats, models::castle(0, Variant::Base)));
+    let mut castle_rigs = HashMap::default();
+    let mut kinds = vec![(0, Variant::Base)];
     for stage in 1..3 {
         for v in [Variant::Defense, Variant::Movement] {
-            castle.insert((stage, v), upload(&mut meshes, &mats, models::castle(stage, v)));
+            kinds.push((stage, v));
         }
     }
+    for (stage, v) in kinds {
+        castle.insert((stage, v), upload(&mut meshes, &mats, models::castle(stage, v)));
+        castle_rigs.insert((stage, v), upload_rig(&mut meshes, &mats, models::castle(stage, v)));
+    }
     let modules = ModuleKind::ALL.iter().map(|&k| (k, upload(&mut meshes, &mats, models::module(k)))).collect();
+    let module_rigs = ModuleKind::ALL.iter().map(|&k| (k, upload_rig(&mut meshes, &mats, models::module(k)))).collect();
     let mut enemies = HashMap::default();
     enemies.insert(EnemyKind::Footman, vec![meshes.add(models::spearman()), meshes.add(models::man_at_arms())]);
     enemies.insert(EnemyKind::Archer, vec![meshes.add(models::archer())]);
@@ -245,35 +278,15 @@ pub fn create_assets(
         let models = rig.models.into_iter().map(|m| upload(&mut meshes, &mats, m)).collect();
         bosses.insert(kind, Rig { models, parts: rig.parts });
     }
+    let vfx = crate::vfx::build_assets(&mut meshes, &mut materials, &mut images);
 
     let glow = |c: Color, e: LinearRgba| StandardMaterial { base_color: c, emissive: e, unlit: true, ..default() };
-    let soft = |c: Color, a: f32| StandardMaterial {
-        base_color: c.with_alpha(a),
-        perceptual_roughness: 1.0,
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    };
-    let mud = textured(&tex[&Surface::Mud], tile_size(Surface::Mud), StandardMaterial::default());
     let m = Mats {
         vc: mats[&Mat::Paint].clone(),
         flash: materials.add(glow(Color::WHITE, LinearRgba::rgb(3.0, 2.6, 2.2))),
         charred: materials.add(StandardMaterial { base_color: Color::srgb(0.22, 0.19, 0.17), perceptual_roughness: 0.95, ..default() }),
         fire: materials.add(glow(Color::srgb(1.0, 0.7, 0.3), LinearRgba::rgb(14.0, 5.5, 1.2))),
-        spark: materials.add(glow(Color::srgb(1.0, 0.85, 0.5), LinearRgba::rgb(7.0, 4.0, 1.2))),
-        smoke: materials.add(soft(Color::srgb(0.82, 0.81, 0.79), 0.38)),
-        smoke_dark: materials.add(soft(Color::srgb(0.16, 0.14, 0.13), 0.6)),
-        track: materials.add(StandardMaterial {
-            base_color: Color::srgba(0.85, 0.8, 0.75, 0.85),
-            base_color_texture: Some(road_tex.clone()),
-            alpha_mode: AlphaMode::Blend,
-            perceptual_roughness: 0.95,
-            cull_mode: None,
-            ..default()
-        }),
-        scorch: materials.add(StandardMaterial { base_color: Color::srgb(0.25, 0.2, 0.18), ..mud.clone() }),
-        dirt: materials.add(mud),
         debris: mats[&Mat::Wood].clone(),
-        blood: materials.add(StandardMaterial { base_color: Color::srgb(0.30, 0.10, 0.07), perceptual_roughness: 0.5, ..default() }),
         water: materials.add(StandardMaterial {
             base_color: Color::srgb(0.17, 0.27, 0.29),
             perceptual_roughness: 0.12,
@@ -308,8 +321,6 @@ pub fn create_assets(
         }),
         stone: mats[&Mat::Stone].clone(),
         grass: materials.add(textured(&tex[&Surface::Grass], tile_size(Surface::Grass), StandardMaterial::default())),
-        smoke_fade: [0.42, 0.34, 0.26, 0.18, 0.1].iter().map(|a| materials.add(soft(Color::srgb(0.84, 0.83, 0.81), *a))).collect(),
-        smoke_dark_fade: [0.6, 0.48, 0.36, 0.24, 0.12].iter().map(|a| materials.add(soft(Color::srgb(0.16, 0.14, 0.13), *a))).collect(),
         road: materials.add(StandardMaterial {
             base_color_texture: Some(road_tex.clone()),
             alpha_mode: AlphaMode::Blend,
@@ -329,10 +340,13 @@ pub fn create_assets(
     commands.insert_resource(art::build_icons(&mut images));
     commands.insert_resource(GameAssets {
         castle,
+        castle_rigs,
         modules,
+        module_rigs,
         enemies,
         archer_aim: meshes.add(models::archer_aiming()),
         bosses,
+        vfx,
         villages: (0..4).map(|i| upload(&mut meshes, &mats, models::village(i))).collect(),
         sheep: meshes.add(models::sheep()),
         coin: upload(&mut meshes, &mats, models::coin()),

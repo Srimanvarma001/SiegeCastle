@@ -13,6 +13,7 @@ use bevy::window::{PresentMode, WindowResolution};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
 
+mod anim;
 mod art;
 mod assets;
 mod boss;
@@ -34,6 +35,7 @@ mod previews;
 mod progression;
 mod studio;
 mod texgen;
+mod vfx;
 mod world;
 
 /// The battlefield is a square from -MAP_HALF to +MAP_HALF (world units).
@@ -178,6 +180,7 @@ fn main() {
             debug::DebugPlugin,
             studio::StudioPlugin,
         ))
+        .add_plugins((anim::AnimPlugin, vfx::VfxPlugin))
         .add_systems(OnEnter(GameState::Starting), start_run)
         .add_systems(Update, (pause_and_restart, tick_run_time))
         .run();
