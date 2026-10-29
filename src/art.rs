@@ -582,7 +582,7 @@ pub fn add_tuft(m: &mut Model, pos: Vec3, size: f32) {
 /// Farm: a house and a wheat field. Driving through it absorbs it.
 pub fn village_model(seed: u32) -> Mesh {
     let mut m = Model::new();
-    let flip = if seed % 2 == 0 { 1.0 } else { -1.0 };
+    let flip = if seed.is_multiple_of(2) { 1.0 } else { -1.0 };
     // Wheat field with rows.
     m.cube(Vec3::new(9.0, 0.35, 7.0), Vec3::new(1.5 * flip, 0.18, 0.0), pal::wheat());
     for i in 0..7 {

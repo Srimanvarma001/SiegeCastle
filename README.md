@@ -4,6 +4,12 @@ A fast 3D medieval action roguelike made with **Rust + Bevy 0.20**.
 
 Drive a castle on wheels across the countryside, plow through marching armies, and bolt new weapons onto your walls as you level up. Your castle grows through 3 stages. Beat 5 bosses, then survive the endless siege for as long as you can, as enemies grow exponentially in numbers and strength.
 
+![Gameplay](docs/gameplay.png)
+
+| Level-up cards | Bosses |
+|---|---|
+| ![Cards](docs/cards.png) | ![Bosses](docs/bosses.png) |
+
 ## Run it
 
 You need [Rust](https://rustup.rs) 1.97.1 or newer.

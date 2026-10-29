@@ -109,7 +109,7 @@ fn make_choice(level: u32, l: &Loadout, rng: &mut GameRng) -> Choice {
         .collect();
     artifacts.shuffle(&mut rng.0);
 
-    let module_turn = level % 2 == 0;
+    let module_turn = level.is_multiple_of(2);
     let (first, second, title) = if module_turn && !modules.is_empty() {
         (modules, artifacts, "Choose New Module!")
     } else {

@@ -282,7 +282,7 @@ fn spawn_hud(mut commands: Commands, icons: Res<Icons>) {
         ))
         .id();
     commands.entity(bar).add_child(nitro);
-    for i in 0..4 {
+    for (i, label) in ABILITY_LABELS.iter().enumerate() {
         let slot = commands
             .spawn((
                 Slot(i),
@@ -321,7 +321,7 @@ fn spawn_hud(mut commands: Commands, icons: Res<Icons>) {
                         BorderColor::all(GOLD),
                         children![(SlotLevel(i), text("", 11.0, GOLD))],
                     ),
-                    key_label(ABILITY_LABELS[i]),
+                    key_label(label),
                 ],
             ))
             .id();

@@ -186,8 +186,8 @@ fn spawn_world(
     };
     let mut solid: Vec<Model> = (0..CHUNKS * CHUNKS).map(|_| Model::new()).collect();
     let mut grass: Vec<Model> = (0..CHUNKS * CHUNKS).map(|_| Model::new()).collect();
-    let mut has_solid = vec![false; CHUNKS * CHUNKS];
-    let mut has_grass = vec![false; CHUNKS * CHUNKS];
+    let mut has_solid = [false; CHUNKS * CHUNKS];
+    let mut has_grass = [false; CHUNKS * CHUNKS];
     let free = |p: Vec2| p.length() > 28.0 && !w.near(p, 3.0) && p.x.abs() < MAP_HALF - 4.0 && p.y.abs() < MAP_HALF - 4.0;
 
     for _ in 0..120 {
@@ -301,7 +301,7 @@ fn spawn_flock(commands: &mut Commands, assets: &GameAssets, rng: &mut GameRng, 
             Sheep { target: q, wait: rng.0.random_range(0.0..3.0) },
             Mesh3d(assets.sheep.clone()),
             MeshMaterial3d(assets.m.vc.clone()),
-            Transform::from_translation(w3(q, 0.0)).with_rotation(yaw(rng.0.random_range(0.0..6.28))),
+            Transform::from_translation(w3(q, 0.0)).with_rotation(yaw(rng.0.random_range(0.0..std::f32::consts::TAU))),
         ));
     }
 }
