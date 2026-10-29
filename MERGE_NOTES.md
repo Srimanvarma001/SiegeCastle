@@ -35,7 +35,37 @@ so nothing runs twice:
 
 ## 1. smoother-play
 
-Fast-forward, no conflicts.
+**What it does:** makes the game run well on laptop graphics.
+- DirectX 12 on Windows by default (some Intel Vulkan drivers run out of
+  memory), and finds the DXC shader compiler next to the exe, not only in
+  the working folder.
+- Fixes a DirectX 12 crash when the window is minimized and restored.
+- Graphics presets (`graphics.rs`): Low / Medium / High picked from the GPU,
+  F9 cycles. The 3D world renders at 67-100% of the window and is stretched
+  over it, while the HUD stays sharp.
+- No shadows anywhere, a higher camera (58 m), mouse-wheel / `-` `=` zoom,
+  a larger ground so the edge never shows.
+- The card portraits are drawn one camera per frame instead of all at once
+  (removed a stutter in the first seconds).
+- The follow camera only looks for the game camera (`MainCamera`), so it no
+  longer waits ~10 s for the portrait cameras to go away.
+- Test switches `SIEGE_PROFILE`, `SIEGE_VSYNC`, `SIEGE_QUALITY`, `SIEGE_GFX`;
+  `play.bat` launcher.
+
+**Incomplete:** nothing found. No TODO file; the code matched its commit message.
+
+**Review and test (on the branch):** builds with no warnings; 40 s autopilot
+run with a boss: no crash, world on screen 4.9 s after launch, 41-53 FPS on
+Iris Xe (Medium preset, vsync on). Main thread ~3 ms per frame, render thread
+~10 ms preparing and ~10 ms submitting, GPU ~11 ms (opaque pass 6-7 ms,
+bloom ~1.7 ms). The render thread is the limit; see PERF_NOTES.md.
+
+**Finished / polished:** README now mentions `play.bat`.
+
+**Performance:** no problems in this branch's code; it is the performance
+branch. The render-thread cost is looked at in the final profiling pass.
+
+**Merge:** first merged as a fast-forward; the README fix merged cleanly.
 
 ## 2. worktree-enemy-visuals
 
