@@ -16,7 +16,7 @@
 //! - `SIEGE_STILL=1`         with the autopilot: stand still (for screenshots)
 //! - `SIEGE_LOWRES=1`        small window (fast tests without a GPU)
 //! - `SIEGE_PROFILE=1`       with `SIEGE_LOG`, also print main-thread and
-//!                           render-thread time per frame and the slowest GPU passes
+//!   render-thread time per frame and the slowest GPU passes
 //! - `SIEGE_VSYNC=0`         turn vsync off (to measure the uncapped frame rate)
 //!
 //! Graphics presets have their own options, see `graphics.rs`.
