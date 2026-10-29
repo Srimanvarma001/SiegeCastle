@@ -20,6 +20,8 @@ cargo run --release
 
 The first build takes a few minutes because it compiles Bevy. Later builds are quick.
 
+On Windows you can also double-click `play.bat`: it builds the game the first time, then starts it from the project folder so it finds `assets/` and the DirectX files below.
+
 On Windows the game uses DirectX 12. Put `dxcompiler.dll` and `dxil.dll` in the project folder (or next to the `.exe`). They come with the Windows SDK, in `C:\Program Files (x86)\Windows Kits\10\bin\<version>\x64\`. Without them DirectX falls back to an old shader compiler, and the world can stay empty for minutes after launch. Set `WGPU_BACKEND=vulkan` to use Vulkan instead.
 
 If the first build crashes with an out-of-memory error, build with fewer parallel jobs: `cargo build --release -j 4`.
