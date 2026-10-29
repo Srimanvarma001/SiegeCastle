@@ -69,7 +69,42 @@ branch. The render-thread cost is looked at in the final profiling pass.
 
 ## 2. worktree-enemy-visuals
 
-Merged without conflicts on top of `smoother-play`. Compiles with no warnings.
+**What it does:** new crimson-and-gold models for the regular enemies, told
+apart from above: spearmen (kettle hat, round shield) and men-at-arms (pointed
+helm, kite shield) picked at random, hooded archers with a second "bow drawn"
+model, knights with a striped lance, and war carts under a striped canopy.
+Troops get a walk / gallop / rumble cycle, lunge at the walls, squash when
+hit, and leave a body that topples over and sinks (charred wreck for carts,
+at most 160). `SIEGE_TROOPS=1` (`studio.rs`) photographs every look.
+
+**Incomplete:** the branch had never been compiled or run (its TODO said so).
+
+**Review and test (on the branch):**
+- Builds with no warnings; clippy (installed for this) finds nothing.
+- `SIEGE_TROOPS=1` close-up, top and game-distance shots: every look is right
+  (shields, helmets, hoods, quivers, rider on the horse, cart spikes) and
+  each type is easy to tell apart from the game camera.
+- Triangles: footmen 567 / 782, archers 602 (622 aiming), knights 1299,
+  carts 2086.
+- 150 s endless stress run (3x clock): no crash; 20-27 FPS with 30 troops
+  and the same with 727, so troop drawing is not the bottleneck (this branch
+  still has the old shadows and SSAO, which is why its FPS is lower).
+- Code review of the walk cycle, archer pose switch and corpse timing found
+  no problems; carts sink 2.6 m before being removed, so nothing pops out.
+
+**Finished / polished:**
+- On the branch: TODO checklist updated with the results; `SIEGE_TROOPS`
+  documented in the README; the studio is kept as a test tool.
+- On `main` after merging (needs the bosses branch): the Siege Tower's crew
+  now uses the new red-hooded enemy archer (bow drawn) instead of the
+  castle's own archer figure, the TODO's "Later" item.
+
+**Performance:** nothing to fix; per-troop animation only moves the whole
+mesh, mesh and material swaps happen only when the state changes, and all
+troops share one material so they batch.
+
+**Merge:** first merge had no conflicts. The follow-up commit merged cleanly
+too (`TODO.md` auto-merged with the bosses checklist).
 
 ## 3. worktree-bosses
 

@@ -453,7 +453,7 @@ pub fn siege_tower() -> RigBuild {
         t.boxy(Mat::Wood, Vec3::new(0.45, 4.2, 0.45), Vec3::new(x * (h - 0.5), ty + 0.9 + 2.1, z * (h - 0.5)), W);
     }
     t.roof(Vec3::new(-3.6, ty + 5.1, 0.0), Quat::from_rotation_y(FRAC_PI_2), ts + 0.4, 6.4, 2.6, 0.5, hide[0], Mat::Wood, W, Mat::Paint);
-    for (i, (p, ang)) in [
+    for (p, ang) in [
         (Vec3::new(5.6, 0.0, -3.6), 0.0),
         (Vec3::new(5.6, 0.0, 0.0), 0.0),
         (Vec3::new(5.6, 0.0, 3.6), 0.0),
@@ -462,13 +462,9 @@ pub fn siege_tower() -> RigBuild {
         (Vec3::new(2.0, 0.0, -5.6), FRAC_PI_2),
         (Vec3::new(-2.5, 0.0, -5.6), FRAC_PI_2),
         (Vec3::new(-5.4, 0.0, 1.5), PI),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let mut a = Model::new();
-        let tunic = if i % 2 == 0 { rgb(0.24, 0.30, 0.16) } else { md::crimson() };
-        md::archer_figure(&mut a, tunic, rgb(0.26, 0.20, 0.13));
+    ] {
+        // The same red-hooded archers as in the enemy army, bows drawn.
+        let a = md::archer_aiming_model();
         t.append(a, Transform::from_translation(p + Vec3::Y * (ty + 0.9)).with_rotation(Quat::from_rotation_y(ang)).with_scale(Vec3::splat(1.35)));
     }
     let sway = rb.model(Model::new());

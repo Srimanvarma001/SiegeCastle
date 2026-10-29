@@ -1539,6 +1539,11 @@ pub fn archer() -> Mesh {
 
 /// Archer standing to shoot, bow drawn.
 pub fn archer_aiming() -> Mesh {
+    finish(archer_aiming_model(), INFANTRY_SCALE)
+}
+
+/// An enemy archer drawing his bow, life size, as a model (boss crews use it).
+pub(crate) fn archer_aiming_model() -> Model {
     let mut m = Model::new();
     archer_body(&mut m, 0.36, 1.5);
     let grip = Vec3::new(0.6, 1.24, -0.12);
@@ -1549,7 +1554,7 @@ pub fn archer_aiming() -> Mesh {
     let d = (grip - draw).normalize();
     limb(&mut m, draw - d * 0.05, grip + d * 0.12, 0.012, 0.012, 3, rgb(0.6, 0.5, 0.35));
     limb(&mut m, grip + d * 0.12, grip + d * 0.22, 0.03, 0.0, 4, helm_steel());
-    finish(m, INFANTRY_SCALE)
+    m
 }
 
 /// Mounted knight: black destrier in a crimson caparison, gold-crested helm,
