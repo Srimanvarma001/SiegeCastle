@@ -7,6 +7,7 @@ use crate::items::{
 use crate::{GameRng, GameState};
 use bevy::picking::events::{PointerClick, PointerOut, PointerOver};
 use bevy::prelude::*;
+use bevy::ui::{BackgroundGradient, ColorStop, LinearGradient, RadialGradient, RadialGradientShape, ShadowStyle, UiPosition, UiTransform, Val2};
 use rand::Rng;
 use rand::seq::SliceRandom;
 
@@ -21,7 +22,7 @@ impl Plugin for ProgressionPlugin {
             .add_systems(Update, open_choice.run_if(in_state(GameState::Playing)))
             .add_systems(OnEnter(GameState::Choosing), spawn_choice_ui)
             .add_systems(OnExit(GameState::Choosing), despawn_choice_ui)
-            .add_systems(Update, pick_card.run_if(in_state(GameState::Choosing)));
+            .add_systems(Update, (pick_card, animate_cards).run_if(in_state(GameState::Choosing)));
     }
 }
 
@@ -165,8 +166,19 @@ fn open_choice(
 #[derive(Component)]
 struct ChoiceScreen;
 
+/// A card on the choice screen: rises into place, lifts when hovered.
 #[derive(Component)]
-struct Card;
+struct Card {
+    index: usize,
+    age: f32,
+    hover: bool,
+    lift: f32,
+}
+
+#[derive(Component)]
+struct ChoiceHeading {
+    age: f32,
+}
 
 /// Set by a card's click observer, read by `pick_card`.
 #[derive(Resource, Default)]
@@ -261,14 +273,27 @@ fn build_choice_ui(commands: &mut Commands, choice: &Choice, loadout: &Loadout, 
                 row_gap: Val::Px(20.0),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.03, 0.02, 0.03, 0.78)),
+            BackgroundGradient::from(RadialGradient::new(
+                UiPosition::CENTER,
+                RadialGradientShape::FarthestCorner,
+                vec![ColorStop::auto(Color::srgba(0.06, 0.03, 0.03, 0.62)), ColorStop::auto(Color::srgba(0.01, 0.0, 0.0, 0.9))],
+            )),
             GlobalZIndex(10),
         ))
         .id();
     let heading = commands
         .spawn((
+            ChoiceHeading { age: 0.0 },
+            UiTransform::IDENTITY,
             Node { flex_direction: FlexDirection::Row, align_items: AlignItems::Center, column_gap: Val::Px(18.0), ..default() },
-            children![rule(90.0), title(choice.title.clone(), 46.0, Color::srgb(0.97, 0.88, 0.66)), rule(90.0)],
+            children![
+                rule(90.0),
+                (
+                    title(choice.title.clone(), 46.0, Color::srgb(0.97, 0.88, 0.66)),
+                    TextShadow { offset: Vec2::new(0.0, 3.0), color: Color::BLACK }
+                ),
+                rule(90.0)
+            ],
         ))
         .id();
     let row = commands.spawn(Node { flex_direction: FlexDirection::Row, column_gap: Val::Px(28.0), ..default() }).id();
@@ -280,7 +305,9 @@ fn build_choice_ui(commands: &mut Commands, choice: &Choice, loadout: &Loadout, 
         let hover = lighter(base);
         let card = commands
             .spawn((
-                Card,
+                Card { index: i, age: 0.0, hover: false, lift: 0.0 },
+                // Starts low and see-through; `animate_cards` raises it into place.
+                UiTransform::from_translation(Val2::px(0.0, 80.0)),
                 Node {
                     width: Val::Px(300.0),
                     height: Val::Px(470.0),
@@ -291,24 +318,63 @@ fn build_choice_ui(commands: &mut Commands, choice: &Choice, loadout: &Loadout, 
                 },
                 BackgroundColor(base),
                 BorderColor::all(GOLD),
-                BoxShadow::new(Color::srgba(0.0, 0.0, 0.0, 0.7), Val::Px(0.0), Val::Px(10.0), Val::Px(4.0), Val::Px(18.0)),
+                BoxShadow(vec![
+                    ShadowStyle {
+                        color: Color::srgba(0.0, 0.0, 0.0, 0.7),
+                        x_offset: Val::Px(0.0),
+                        y_offset: Val::Px(10.0),
+                        spread_radius: Val::Px(4.0),
+                        blur_radius: Val::Px(18.0),
+                    },
+                    ShadowStyle {
+                        color: Color::srgba(1.0, 0.75, 0.3, 0.0),
+                        x_offset: Val::Px(0.0),
+                        y_offset: Val::Px(0.0),
+                        spread_radius: Val::Px(2.0),
+                        blur_radius: Val::Px(22.0),
+                    },
+                ]),
             ))
             .id();
         commands
             .entity(card)
             .observe(move |_: On<PointerClick>, mut clicked: ResMut<ClickedCard>| clicked.0 = Some(i))
-            .observe(move |_: On<PointerOver>, mut q: Query<(&mut BackgroundColor, &mut BorderColor)>| {
-                if let Ok((mut bg, mut border)) = q.get_mut(card) {
+            .observe(move |_: On<PointerOver>, mut q: Query<(&mut BackgroundColor, &mut BorderColor, &mut Card)>| {
+                if let Ok((mut bg, mut border, mut c)) = q.get_mut(card) {
                     bg.0 = hover;
                     *border = BorderColor::all(Color::srgb(1.0, 0.85, 0.5));
+                    c.hover = true;
                 }
             })
-            .observe(move |_: On<PointerOut>, mut q: Query<(&mut BackgroundColor, &mut BorderColor)>| {
-                if let Ok((mut bg, mut border)) = q.get_mut(card) {
+            .observe(move |_: On<PointerOut>, mut q: Query<(&mut BackgroundColor, &mut BorderColor, &mut Card)>| {
+                if let Ok((mut bg, mut border, mut c)) = q.get_mut(card) {
                     bg.0 = base;
                     *border = BorderColor::all(GOLD);
+                    c.hover = false;
                 }
             });
+        // Velvet sheen: light catches the top of the card.
+        let sheen = commands
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    top: Val::Px(0.0),
+                    width: Val::Percent(100.0),
+                    height: Val::Percent(100.0),
+                    border_radius: corner(13.0),
+                    ..default()
+                },
+                BackgroundGradient::from(LinearGradient::to_bottom(vec![
+                    ColorStop::percent(Color::srgba(1.0, 0.9, 0.8, 0.12), 0.0),
+                    ColorStop::percent(Color::srgba(1.0, 0.9, 0.8, 0.0), 38.0),
+                    ColorStop::percent(Color::srgba(0.0, 0.0, 0.0, 0.0), 60.0),
+                    ColorStop::percent(Color::srgba(0.0, 0.0, 0.0, 0.35), 100.0),
+                ])),
+                bevy::picking::Pickable::IGNORE,
+            ))
+            .id();
+        commands.entity(card).add_child(sheen);
         let inner = commands
             .spawn((
                 Node {
@@ -398,6 +464,35 @@ fn build_choice_ui(commands: &mut Commands, choice: &Choice, loadout: &Loadout, 
     };
     let hint = commands.spawn(text(hint, 19.0, Color::srgba(0.93, 0.88, 0.78, 0.75))).id();
     commands.entity(root).add_child(hint);
+}
+
+/// Cards rise into place one after another; hovered cards lift and glow.
+fn animate_cards(
+    time: Res<Time<Real>>,
+    mut cards: Query<(&mut Card, &mut UiTransform, &mut BoxShadow), Without<ChoiceHeading>>,
+    mut headings: Query<(&mut ChoiceHeading, &mut UiTransform), Without<Card>>,
+) {
+    let dt = time.delta_secs();
+    for (mut h, mut tf) in &mut headings {
+        h.age += dt;
+        let k = (h.age / 0.35).clamp(0.0, 1.0);
+        let k = 1.0 - (1.0 - k).powi(3);
+        tf.scale = Vec2::splat(1.15 - 0.15 * k);
+    }
+    for (mut c, mut tf, mut shadow) in &mut cards {
+        c.age += dt;
+        let t = ((c.age - c.index as f32 * 0.08) / 0.4).clamp(0.0, 1.0);
+        // Ease out with a little overshoot.
+        let u = t - 1.0;
+        let rise = 1.0 + u * u * (2.2 * u + 1.2);
+        let want = if c.hover { 1.0 } else { 0.0 };
+        c.lift += (want - c.lift) * (1.0 - (-14.0 * dt).exp());
+        tf.translation = Val2::px(0.0, 80.0 * (1.0 - rise) - 12.0 * c.lift);
+        tf.scale = Vec2::splat((0.92 + 0.08 * rise) * (1.0 + 0.04 * c.lift));
+        if let Some(glow) = shadow.0.get_mut(1) {
+            glow.color = Color::srgba(1.0, 0.75, 0.3, 0.55 * c.lift);
+        }
+    }
 }
 
 fn despawn_choice_ui(mut commands: Commands, q: Query<Entity, With<ChoiceScreen>>) {

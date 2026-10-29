@@ -193,20 +193,22 @@ fn auto_attacks(
                 t.auto = m.kind.auto_cooldown() * 0.9f32.powi(m.level as i32 - 1);
                 let lead = tpos + tvel * (tpos.distance(from2) / 60.0);
                 let dir = (lead - from2).normalize_or(fwd);
-                fire_bolt(&mut commands, &assets, from2, dir, dmg, 4 + m.level * 2, range / 60.0);
+                fire_bolt(&mut commands, &assets, from2, from.y + 1.0, dir, dmg, 4 + m.level * 2, range / 60.0);
             }
             ModuleKind::Ram => {}
         }
     }
 }
 
-fn fire_bolt(commands: &mut Commands, assets: &GameAssets, from: Vec2, dir: Vec2, dmg: f32, pierce: u32, life: f32) {
+/// A bolt leaving the ballista at `height`, dipping to hit chest height.
+fn fire_bolt(commands: &mut Commands, assets: &GameAssets, from: Vec2, height: f32, dir: Vec2, dmg: f32, pierce: u32, life: f32) {
     commands.spawn((
         GameEntity,
         Bullet::friendly(dir * 60.0, dmg, 0.5, pierce, life),
+        crate::anim::Sink(1.6),
         Mesh3d(assets.arrow.clone()),
         MeshMaterial3d(assets.m.vc.clone()),
-        Transform::from_translation(w3(from, 2.0)).with_rotation(crate::art::yaw(dir.to_angle())).with_scale(Vec3::splat(2.4)),
+        Transform::from_translation(w3(from, height)).with_rotation(crate::art::yaw(dir.to_angle())).with_scale(Vec3::splat(2.4)),
         NotShadowCaster,
     ));
 }
@@ -297,7 +299,7 @@ fn use_abilities(
                 let n = 9 + m.level;
                 for b in 0..n {
                     let a = fwd.to_angle() + (b as f32 / (n - 1) as f32 - 0.5) * 1.1;
-                    fire_bolt(&mut commands, &assets, p2(from), Vec2::from_angle(a), dmg * 1.3, 8 + m.level, 1.0);
+                    fire_bolt(&mut commands, &assets, p2(from), from.y + 1.0, Vec2::from_angle(a), dmg * 1.3, 8 + m.level, 1.0);
                 }
                 shake.0 += 0.4;
             }

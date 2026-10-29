@@ -88,7 +88,15 @@ Everything is generated in code, with no art files to download:
 - **Weapons:** a bronze cannon on a spoked-wheel carriage, a torsion ballista, archers drawing longbows on a covered hoarding, a bronze mortar, and a covered battering ram.
 - **Cards:** velvet-and-gold level-up cards (crimson for weapons, sapphire for artifacts, emerald for castle growth) showing real 3D renders of each item, made in an off-screen studio at startup.
 - **Lighting:** a warm late-afternoon sun with soft cascaded shadows, cool sky light, screen-space ambient occlusion, distance haze, bloom on fire, and SMAA anti-aliasing.
-- **UI:** Cinzel titles and EB Garamond text (both under the SIL Open Font License, see `assets/fonts/`).
+- **Effects:** soft smoke, dust and fire sprites painted at startup, flashes of light that briefly light up the ground, shockwave rings, sparks and embers, muzzle blasts, smoke trails behind cannonballs and shells, blood splatter and scorch marks that fade away, and wheel ruts behind the castle.
+- **UI:** Cinzel titles and EB Garamond text (both under the SIL Open Font License, see `assets/fonts/`). Leather-and-bronze panels, glossy bars that leave a pale trail when you take damage, a clock-hand sweep on ability cooldowns, a level ring that pops on level-up, cards that rise into place and lift when hovered, and screen edges that flush red when the walls are hit.
+
+## How it moves
+
+- **Castle:** wheels roll with your speed, the body leans into turns, squats when you speed up, rocks and sheds stone chips when hit, and kicks up dust. Flags wave.
+- **Weapons:** the ballista, bombard and archers turn to track their target. Barrels slam back when they fire, the ballista bolt vanishes and is winched back in, and the ram log swings as you speed up and brake, then pounds back and forth while charging.
+- **Troops:** march with a stride of their own, horses gallop, soldiers hack at your walls, archers recoil as they loose, everyone flinches when hit and gets bowled over by rams and blasts. The fallen topple over and sink away.
+- **Bosses:** the Siege Tower drops its drawbridge to let each squad out, the War Wagon drives around you while its turret tracks you, the Juggernaut rears up and spins its drill before charging, the Trebuchet's arm whips over the top on every throw, and the Warlord's twin guns slam back on each volley. Beaten bosses list over and sink in fire and smoke.
 
 ## Why it is fast
 
@@ -114,7 +122,9 @@ src/
   modules.rs      weapon auto-attacks and abilities
   enemy.rs        troops, formations, the five bosses
   director.rs     spawning, boss countdown, endless scaling
-  combat.rs       shots, explosions, mines, coins, effects
+  combat.rs       shots, explosions, mines, coins
+  vfx.rs          smoke, fire, sparks, flashes, debris and ground marks
+  anim.rs         moving parts, troop and boss animation, corpses and wrecks
   progression.rs  XP, levels, card choices
   world.rs        terrain, forests, water, farms, sheep, camera, sun
   hud.rs          on-screen bars, slots, banners, end screens

@@ -64,7 +64,7 @@ fn hash(x: i32, y: i32, seed: u32) -> f32 {
 }
 
 /// Value noise that wraps every `period` cells, so textures tile seamlessly.
-fn vnoise(u: f32, v: f32, period: i32, seed: u32) -> f32 {
+pub(crate) fn vnoise(u: f32, v: f32, period: i32, seed: u32) -> f32 {
     let x = u * period as f32;
     let y = v * period as f32;
     let (xi, yi) = (x.floor() as i32, y.floor() as i32);
@@ -81,7 +81,7 @@ fn vnoise(u: f32, v: f32, period: i32, seed: u32) -> f32 {
     top + (bot - top) * sy
 }
 
-fn fbm(u: f32, v: f32, period: i32, octaves: u32, seed: u32) -> f32 {
+pub(crate) fn fbm(u: f32, v: f32, period: i32, octaves: u32, seed: u32) -> f32 {
     let (mut sum, mut amp, mut norm, mut p) = (0.0, 0.5, 0.0, period);
     for o in 0..octaves {
         sum += vnoise(u, v, p, seed + o * 17) * amp;
@@ -92,7 +92,7 @@ fn fbm(u: f32, v: f32, period: i32, octaves: u32, seed: u32) -> f32 {
     sum / norm
 }
 
-fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
+pub(crate) fn smooth(e0: f32, e1: f32, x: f32) -> f32 {
     let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }
@@ -333,7 +333,7 @@ fn image_with_mips(pixels: Vec<[f32; 4]>, format: TextureFormat, renormalize: bo
     image_with_mips_sized(pixels, S, S, format, renormalize)
 }
 
-fn image_with_mips_sized(pixels: Vec<[f32; 4]>, w0: usize, h0: usize, format: TextureFormat, renormalize: bool) -> Image {
+pub(crate) fn image_with_mips_sized(pixels: Vec<[f32; 4]>, w0: usize, h0: usize, format: TextureFormat, renormalize: bool) -> Image {
     let mut levels: Vec<Vec<[f32; 4]>> = vec![pixels];
     let (mut w, mut h) = (w0, h0);
     while w > 1 || h > 1 {

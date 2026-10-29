@@ -4,7 +4,7 @@ use crate::GameState;
 use crate::art::{self, Variant};
 use crate::enemy::EnemyKind;
 use crate::items::ModuleKind;
-use crate::models::{self, Mat, Model};
+use crate::models::{self, Mat, Model, RigPart, Role};
 use crate::texgen::{self, Surface};
 use bevy::math::Affine2;
 use bevy::platform::collections::HashMap;
@@ -31,14 +31,37 @@ impl ModelHandle {
     }
 }
 
+/// A moving piece of a model, ready to spawn (see `anim::spawn_pieces`).
+#[derive(Clone)]
+pub struct PartHandle {
+    pub role: Role,
+    pub pivot: Vec3,
+    pub rest: Quat,
+    pub model: ModelHandle,
+    pub parts: Vec<PartHandle>,
+}
+
+/// A model split into its static body and its moving pieces.
+#[derive(Clone, Default)]
+pub struct RigHandle {
+    pub body: ModelHandle,
+    pub parts: Vec<PartHandle>,
+}
+
 #[derive(Resource)]
 pub struct GameAssets {
-    /// Castle per (stage, variant).
+    /// Castle per (stage, variant), all in one piece (for portraits).
     pub castle: HashMap<(usize, Variant), ModelHandle>,
+    /// The same castles with moving wheels and flags.
+    pub castle_rigs: HashMap<(usize, Variant), RigHandle>,
     pub modules: HashMap<ModuleKind, ModelHandle>,
+    pub module_rigs: HashMap<ModuleKind, RigHandle>,
     /// Troops: one vertex-colored mesh each.
     pub enemies: HashMap<EnemyKind, Handle<Mesh>>,
+    /// Boss bodies. Their moving pieces are in `boss_parts`.
     pub bosses: HashMap<EnemyKind, ModelHandle>,
+    pub boss_parts: HashMap<EnemyKind, Vec<PartHandle>>,
+    pub vfx: crate::vfx::VfxAssets,
     pub villages: Vec<ModelHandle>,
     pub sheep: Handle<Mesh>,
     pub coin: ModelHandle,
@@ -141,6 +164,22 @@ pub fn upload(meshes: &mut Assets<Mesh>, mats: &HashMap<Mat, Handle<StandardMate
     ModelHandle(model.build().into_iter().map(|(m, mesh)| (meshes.add(mesh), mats[&m].clone())).collect())
 }
 
+/// Uploads a model keeping its moving pieces separate.
+pub fn upload_rig(meshes: &mut Assets<Mesh>, mats: &HashMap<Mat, Handle<StandardMaterial>>, model: Model) -> RigHandle {
+    fn part(meshes: &mut Assets<Mesh>, mats: &HashMap<Mat, Handle<StandardMaterial>>, p: RigPart) -> PartHandle {
+        let (body, rig) = p.model.split();
+        PartHandle {
+            role: p.role,
+            pivot: p.pivot,
+            rest: p.rest,
+            model: upload(meshes, mats, body),
+            parts: rig.into_iter().map(|r| part(meshes, mats, r)).collect(),
+        }
+    }
+    let (body, rig) = model.split();
+    RigHandle { body: upload(meshes, mats, body), parts: rig.into_iter().map(|r| part(meshes, mats, r)).collect() }
+}
+
 pub fn create_assets(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -204,19 +243,26 @@ pub fn create_assets(
     }
 
     let mut castle = HashMap::default();
-    castle.insert((0, Variant::Base), upload(&mut meshes, &mats, models::castle(0, Variant::Base)));
+    let mut castle_rigs = HashMap::default();
+    let mut kinds = vec![(0, Variant::Base)];
     for stage in 1..3 {
         for v in [Variant::Defense, Variant::Movement] {
-            castle.insert((stage, v), upload(&mut meshes, &mats, models::castle(stage, v)));
+            kinds.push((stage, v));
         }
     }
+    for (stage, v) in kinds {
+        castle.insert((stage, v), upload(&mut meshes, &mats, models::castle(stage, v)));
+        castle_rigs.insert((stage, v), upload_rig(&mut meshes, &mats, models::castle(stage, v)));
+    }
     let modules = ModuleKind::ALL.iter().map(|&k| (k, upload(&mut meshes, &mats, models::module(k)))).collect();
+    let module_rigs = ModuleKind::ALL.iter().map(|&k| (k, upload_rig(&mut meshes, &mats, models::module(k)))).collect();
     let mut enemies = HashMap::default();
     enemies.insert(EnemyKind::Footman, meshes.add(models::footman()));
     enemies.insert(EnemyKind::Archer, meshes.add(models::archer()));
     enemies.insert(EnemyKind::Knight, meshes.add(models::knight()));
     enemies.insert(EnemyKind::Cart, meshes.add(models::cart()));
     let mut bosses = HashMap::default();
+    let mut boss_parts = HashMap::default();
     for (kind, model) in [
         (EnemyKind::SiegeTower, models::siege_tower()),
         (EnemyKind::WarWagon, models::war_wagon()),
@@ -224,8 +270,11 @@ pub fn create_assets(
         (EnemyKind::Trebuchet, models::trebuchet()),
         (EnemyKind::Warlord, models::warlord()),
     ] {
-        bosses.insert(kind, upload(&mut meshes, &mats, model));
+        let rig = upload_rig(&mut meshes, &mats, model);
+        bosses.insert(kind, rig.body);
+        boss_parts.insert(kind, rig.parts);
     }
+    let vfx = crate::vfx::build_assets(&mut meshes, &mut materials, &mut images);
 
     let glow = |c: Color, e: LinearRgba| StandardMaterial { base_color: c, emissive: e, unlit: true, ..default() };
     let soft = |c: Color, a: f32| StandardMaterial {
@@ -296,9 +345,13 @@ pub fn create_assets(
     commands.insert_resource(art::build_icons(&mut images));
     commands.insert_resource(GameAssets {
         castle,
+        castle_rigs,
         modules,
+        module_rigs,
         enemies,
         bosses,
+        boss_parts,
+        vfx,
         villages: (0..4).map(|i| upload(&mut meshes, &mats, models::village(i))).collect(),
         sheep: meshes.add(models::sheep()),
         coin: upload(&mut meshes, &mats, models::coin()),

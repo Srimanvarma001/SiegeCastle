@@ -380,12 +380,14 @@ fn boss_ai(
                 } else {
                     tangent * en.speed * 0.8
                 };
+                // It drives where it goes; the turret does the aiming.
+                face = vel.normalize_or(dir);
                 if boss.timer <= 0.0 && dist < 34.0 {
                     boss.timer = 2.2;
                     let lead = cpos + c.vel * (dist / 26.0);
                     let aim = (lead - pos).normalize_or(dir);
                     let muzzle = pos + aim * (en.radius + 1.0);
-                    fire_ball(&mut commands, &assets, muzzle, aim * 26.0, 10.0 * en.dmg_mult);
+                    fire_ball(&mut commands, &assets, muzzle, 3.6, aim * 26.0, 10.0 * en.dmg_mult);
                 }
             }
             EnemyKind::Juggernaut => charge_ai(&mut commands, &assets, &mut boss, &mut en, pos, dir, dist, 34.0, 30.0, &mut vel, &mut face),
@@ -415,7 +417,7 @@ fn boss_ai(
                     boss.timer2 = 3.0;
                     for i in -2..=2 {
                         let aim = Vec2::from_angle(dir.to_angle() + i as f32 * 0.16);
-                        fire_ball(&mut commands, &assets, pos + aim * (en.radius + 1.0), aim * 24.0, 14.0 * en.dmg_mult);
+                        fire_ball(&mut commands, &assets, pos + aim * (en.radius + 1.0), 6.8, aim * 24.0, 14.0 * en.dmg_mult);
                     }
                 }
                 if boss.state == BossState::Approach && boss.timer <= 0.0 && dist < 60.0 && rng.0.random::<f32>() < 0.4 {
@@ -461,8 +463,9 @@ fn boss_ai(
         let lim = MAP_HALF - en.radius;
         next = next.clamp(Vec2::splat(-lim), Vec2::splat(lim));
         tf.translation = w3(next, 0.0);
-        if vel.length_squared() > 0.01 || en.kind == EnemyKind::WarWagon {
-            let want = if en.kind == EnemyKind::WarWagon { dir.to_angle() } else { face.to_angle() };
+        // The trebuchet keeps turning to face you even while it stands still.
+        if vel.length_squared() > 0.01 || en.kind == EnemyKind::Trebuchet {
+            let want = face.to_angle();
             let cur = tf.rotation.to_euler(EulerRot::YXZ).0;
             let diff = (want - cur + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU) - std::f32::consts::PI;
             tf.rotation = yaw(cur + diff * (1.0 - (-4.0 * dt).exp()));
@@ -535,15 +538,16 @@ fn charge_ai(
     }
 }
 
-fn fire_ball(commands: &mut Commands, assets: &GameAssets, from: Vec2, vel: Vec2, dmg: f32) {
+/// A cannonball leaving the barrel at `height`, dropping to chest height.
+fn fire_ball(commands: &mut Commands, assets: &GameAssets, from: Vec2, height: f32, vel: Vec2, dmg: f32) {
     commands.spawn((
         GameEntity,
         Bullet::hostile(vel, dmg, 0.5, 3.0),
+        crate::anim::Sink(1.8),
         Mesh3d(assets.ball.clone()),
         MeshMaterial3d(assets.m.cannonball.clone()),
-        Transform::from_translation(w3(from, 1.8)).with_scale(Vec3::splat(1.0)),
+        Transform::from_translation(w3(from, height)).with_scale(Vec3::splat(1.0)),
     ));
-    spawn_fx(commands, assets, FxKind::Smoke, w3(from, 2.0), 1.4, Vec3::new(0.0, 1.0, 0.0));
 }
 
 /// Red arrow next to the castle pointing at the nearest boss.
