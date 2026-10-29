@@ -95,11 +95,15 @@ fn main() {
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(7);
 
+    // Test option: a small window renders much faster without a GPU.
+    let lowres = std::env::var("SIEGE_LOWRES").is_ok();
+    let (w, h) = if lowres { (640, 360) } else { (1280, 720) };
+
     App::new()
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
                 title: "SiegeCastle".into(),
-                resolution: WindowResolution::new(1280, 720),
+                resolution: WindowResolution::new(w, h),
                 present_mode: PresentMode::AutoVsync,
                 ..default()
             }),

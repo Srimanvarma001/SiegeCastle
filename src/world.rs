@@ -100,7 +100,7 @@ fn spawn_light(mut commands: Commands) {
         DirectionalLight {
             color: Color::srgb(1.0, 0.95, 0.86),
             illuminance: 3_600.0,
-            shadow_maps_enabled: true,
+            shadow_maps_enabled: std::env::var("SIEGE_LOWRES").is_err(),
             ..default()
         },
         Transform::from_xyz(-40.0, 90.0, 35.0).looking_at(Vec3::ZERO, Vec3::Y),

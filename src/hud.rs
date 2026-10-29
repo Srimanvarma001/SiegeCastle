@@ -417,6 +417,13 @@ fn key_label(k: &str) -> impl Bundle {
     )
 }
 
+/// Only touch the text when it really changes, so Bevy skips re-layout.
+fn set(t: &mut Mut<Text>, s: String) {
+    if t.0 != s {
+        t.0 = s;
+    }
+}
+
 fn fmt_time(t: f32) -> String {
     let s = t.max(0.0) as u32;
     format!("{:02}:{:02}", s / 60, s % 60)
@@ -444,16 +451,16 @@ fn update_bars(
         return;
     };
     if let Ok(mut t) = texts.p0().single_mut() {
-        t.0 = format!("{:.0} / {:.0}", progress.xp.floor(), progress.need);
+        set(&mut t, format!("{:.0} / {:.0}", progress.xp.floor(), progress.need));
     }
     if let Ok(mut t) = texts.p1().single_mut() {
-        t.0 = progress.level.to_string();
+        set(&mut t, progress.level.to_string());
     }
     if let Ok(mut t) = texts.p2().single_mut() {
-        t.0 = format!("{:.0} / {:.0}", c.hp.max(0.0).ceil(), stats.max_hp);
+        set(&mut t, format!("{:.0} / {:.0}", c.hp.max(0.0).ceil(), stats.max_hp));
     }
     if let Ok(mut t) = texts.p3().single_mut() {
-        t.0 = format!("Stage {}/3   {}", loadout.stage + 1, stage_info(loadout.stage, loadout.variant).name);
+        set(&mut t, format!("Stage {}/3   {}", loadout.stage + 1, stage_info(loadout.stage, loadout.variant).name));
     }
     if let Ok(mut n) = fills.p0().single_mut() {
         n.width = Val::Percent((progress.xp / progress.need).clamp(0.0, 1.0) * 100.0);
@@ -494,18 +501,18 @@ fn update_boss(
     match (director.endless, director.next_boss()) {
         (false, Some(_)) if director.boss_timer.is_finite() => {
             *tv = Visibility::Inherited;
-            tt.0 = format!("BOSS IN {}", fmt_time(director.boss_timer));
+            set(&mut tt, format!("BOSS IN {}", fmt_time(director.boss_timer)));
         }
         (true, _) => {
             *tv = Visibility::Inherited;
-            tt.0 = format!("ENDLESS  {}   next boss {}", fmt_time(director.endless_time), fmt_time(director.boss_timer));
+            set(&mut tt, format!("ENDLESS  {}   next boss {}", fmt_time(director.endless_time), fmt_time(director.boss_timer)));
         }
         _ => *tv = Visibility::Hidden,
     }
     match nearest {
         Some((_, en)) => {
             *bv = Visibility::Inherited;
-            bn.0 = en.kind.name().to_uppercase();
+            set(&mut bn, en.kind.name().to_uppercase());
             bf.width = Val::Percent((en.hp / en.max_hp).clamp(0.0, 1.0) * 100.0);
         }
         None => *bv = Visibility::Hidden,
@@ -547,10 +554,10 @@ fn update_slots(
     }
     for (s, mut t) in &mut cd_texts {
         let left = loadout.modules.get(s.0).and_then(|m| cds.0.get(&m.kind)).map(|t| t.ability).unwrap_or(0.0);
-        t.0 = if left > 0.0 { format!("{}", left.ceil() as u32) } else { String::new() };
+        set(&mut t, if left > 0.0 { format!("{}", left.ceil() as u32) } else { String::new() });
     }
     for (s, mut t) in &mut levels {
-        t.0 = loadout.modules.get(s.0).map(|m| m.level.to_string()).unwrap_or_default();
+        set(&mut t, loadout.modules.get(s.0).map(|m| m.level.to_string()).unwrap_or_default());
     }
 }
 
@@ -593,14 +600,14 @@ fn update_info(
         return;
     };
     let fps = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS).and_then(|d| d.smoothed()).unwrap_or(0.0);
-    t.0 = format!(
+    set(&mut t, format!(
         "{}\nKills {}\nEnemies {}\nBosses {}/5\nFPS {:.0}",
         fmt_time(stats.time),
         stats.kills,
         enemies.iter().count(),
         stats.bosses_killed.min(5),
         fps
-    );
+    ));
 }
 
 fn update_banner(

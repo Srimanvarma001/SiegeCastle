@@ -12,6 +12,7 @@
 //! - `SIEGE_ENDLESS=1`       start directly in endless mode
 //! - `SIEGE_GOD=1`           castle cannot be destroyed
 //! - `SIEGE_GALLERY=1`       spawn all five bosses around the castle at once
+//! - `SIEGE_LOWRES=1`        small window, no shadows (fast tests without a GPU)
 //!
 //! F12 always saves a screenshot.
 
