@@ -13,17 +13,26 @@
 //! - `SIEGE_GOD=1`           castle cannot be destroyed
 //! - `SIEGE_GALLERY=1`       spawn all five bosses around the castle at once
 //! - `SIEGE_LOWRES=1`        small window, no shadows (fast tests without a GPU)
+//! - `SIEGE_STAGE=3`         start at this castle stage (1-3)
+//! - `SIEGE_VARIANT=movement` growth path for stages 2 and 3 (`defense` or `movement`)
+//! - `SIEGE_LOADOUT=ballista,mortar,loft,ram,mines,cannons` start with these weapons
+//! - `SIEGE_CAM=0.3,40,35`   close-up camera: zoom, turn and tilt (degrees); turn 0 looks
+//!                           from behind the castle, 90 from its right, 180 from the front
+//! - `SIEGE_ARMORY=1`        every weapon on the grass in front of the castle, firing on a
+//!                           loop (the close-up camera then looks at them)
 //!
 //! F12 always saves a screenshot.
 
-use crate::art::p2;
+use crate::art::{p2, w3, Variant};
 use crate::director::{Director, BOSSES};
 use crate::enemy::{Boss, Enemy};
-use crate::items::{Loadout, Stats};
+use crate::items::{Loadout, ModuleKind, OwnedModule, Stats};
 use crate::modules::AutoAbilities;
 use crate::player::{Castle, DriveInput};
 use crate::progression::{xp_needed, Progress};
-use crate::{GameRng, GameState, RunStats, Sim};
+use crate::weapons::{spawn_rig, WeaponAnim, WeaponFired};
+use crate::{GameEntity, GameRng, GameState, RunStats, Sim};
+use bevy::camera::visibility::RenderLayers;
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
@@ -48,6 +57,13 @@ impl Plugin for DebugPlugin {
             endless: env("SIEGE_ENDLESS").is_some(),
             god: env("SIEGE_GOD").is_some(),
             gallery: env("SIEGE_GALLERY").is_some(),
+            stage: env("SIEGE_STAGE").and_then(|v| v.parse::<usize>().ok()).map(|s| s.clamp(1, 3) - 1),
+            variant: match env("SIEGE_VARIANT").as_deref() {
+                Some("movement") => Variant::Movement,
+                _ => Variant::Defense,
+            },
+            loadout: env("SIEGE_LOADOUT").map(|v| v.split(',').filter_map(module_by_name).collect()),
+            armory: env("SIEGE_ARMORY").is_some(),
             next_log: 0.0,
             manual_shots: 0,
             applied: false,
@@ -63,6 +79,23 @@ impl Plugin for DebugPlugin {
                         .after(crate::player::read_input)
                         .before(crate::player::drive),
                 );
+        }
+        if let Some(cam) = env("SIEGE_CAM") {
+            let v: Vec<f32> = cam.split(',').filter_map(|t| t.trim().parse().ok()).collect();
+            let get = |i: usize, d: f32| v.get(i).copied().unwrap_or(d);
+            app.insert_resource(CloseUp {
+                zoom: get(0, 0.3),
+                turn: get(1, 0.0).to_radians(),
+                tilt: get(2, 65.0).to_radians(),
+                armory: env("SIEGE_ARMORY").is_some(),
+            })
+                .add_systems(
+                    PostUpdate,
+                    close_up.after(crate::world::follow_camera).before(bevy::transform::TransformSystems::Propagate),
+                );
+        }
+        if env("SIEGE_ARMORY").is_some() {
+            app.add_systems(Update, armory_fire.in_set(Sim::Combat).run_if(in_state(GameState::Playing)));
         }
         app.insert_resource(cfg)
             .add_systems(Startup, apply_speed)
@@ -93,6 +126,10 @@ struct DebugConfig {
     endless: bool,
     god: bool,
     gallery: bool,
+    stage: Option<usize>,
+    variant: Variant,
+    loadout: Option<Vec<ModuleKind>>,
+    armory: bool,
     next_log: f32,
     manual_shots: u32,
     applied: bool,
@@ -100,6 +137,63 @@ struct DebugConfig {
 
 #[derive(Resource)]
 struct ExitSoon(u32);
+
+/// Camera override for looking at the castle up close.
+#[derive(Resource)]
+struct CloseUp {
+    zoom: f32,
+    turn: f32,
+    tilt: f32,
+    armory: bool,
+}
+
+/// Where the armory weapons stand (ground plane), left to right.
+fn armory_spot(i: usize) -> Vec2 {
+    Vec2::new(-7.5 + i as f32 * 3.0, 16.0)
+}
+
+/// Fires every armory weapon in turn, so their animations can be watched.
+fn armory_fire(time: Res<Time>, mut fired: MessageWriter<WeaponFired>, mut clock: Local<f32>) {
+    let before = *clock;
+    *clock += time.delta_secs();
+    for (i, kind) in ModuleKind::ALL.iter().enumerate() {
+        let phase = |t: f32| ((t + i as f32 * 0.27) / 1.9).floor();
+        if phase(*clock) > phase(before) {
+            let target = Some(armory_spot(i) + Vec2::new(-6.0 + i as f32 * 2.5, 12.0));
+            fired.write(WeaponFired { kind: *kind, target, side: 0.0, reload: 1.6 });
+        }
+    }
+}
+
+fn module_by_name(name: &str) -> Option<ModuleKind> {
+    Some(match name.trim() {
+        "ballista" => ModuleKind::Ballista,
+        "mortar" | "bombard" => ModuleKind::Mortar,
+        "loft" | "archers" => ModuleKind::ArrowLoft,
+        "ram" => ModuleKind::Ram,
+        "mines" | "chute" => ModuleKind::MineLayer,
+        "cannons" | "broadside" => ModuleKind::Broadside,
+        _ => return None,
+    })
+}
+
+fn close_up(
+    cfg: Res<CloseUp>,
+    castle: Query<&Transform, (With<Castle>, Without<Camera3d>)>,
+    mut cam: Query<&mut Transform, (With<Camera3d>, Without<RenderLayers>)>,
+) {
+    let (Ok(c), Ok(mut tf)) = (castle.single(), cam.single_mut()) else {
+        return;
+    };
+    let d = 43.0 * cfg.zoom;
+    let (look, rot) = if cfg.armory {
+        (w3(armory_spot(0).lerp(armory_spot(5), 0.5), 0.6), crate::art::yaw(std::f32::consts::FRAC_PI_2))
+    } else {
+        (c.translation + Vec3::Y * 2.5, c.rotation)
+    };
+    let dir = Vec3::new(-cfg.turn.cos(), 0.0, cfg.turn.sin()) * cfg.tilt.cos() + Vec3::Y * cfg.tilt.sin();
+    *tf = Transform::from_translation(look + rot * dir * d).looking_at(look, Vec3::Y);
+}
 
 fn apply_speed(cfg: Res<DebugConfig>, mut time: ResMut<Time<Virtual>>) {
     if let Some(s) = cfg.speed {
@@ -153,6 +247,7 @@ fn cheats(
     mut cfg: ResMut<DebugConfig>,
     mut progress: ResMut<Progress>,
     mut director: ResMut<Director>,
+    mut loadout: ResMut<Loadout>,
     stats: Res<Stats>,
     mut castle: Query<&mut Castle>,
     positions: Query<&Transform, With<Castle>>,
@@ -171,6 +266,26 @@ fn cheats(
         if let Some(lvl) = cfg.start_level {
             let total: f32 = (1..lvl).map(xp_needed).sum();
             progress.add_xp(total);
+        }
+        if let Some(stage) = cfg.stage {
+            loadout.stage = stage;
+            loadout.variant = if stage == 0 { Variant::Base } else { cfg.variant };
+        }
+        if let Some(kinds) = &cfg.loadout {
+            loadout.modules = kinds.iter().map(|&kind| OwnedModule { kind, level: 1 }).collect();
+        }
+        if cfg.armory {
+            for (i, kind) in ModuleKind::ALL.iter().enumerate() {
+                let rig = &assets.rigs[kind];
+                let mut gun = commands.spawn((
+                    GameEntity,
+                    WeaponAnim::new(*kind, 1.0, rig),
+                    Transform::from_translation(w3(armory_spot(i), 0.0)).with_rotation(crate::art::yaw(std::f32::consts::FRAC_PI_2)),
+                    Visibility::Visible,
+                ));
+                let owner = gun.id();
+                gun.with_children(|q| spawn_rig(q, rig, owner));
+            }
         }
         if let Some(s) = cfg.boss_in {
             director.boss_timer = s;

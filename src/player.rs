@@ -6,6 +6,7 @@ use crate::combat::{damage_area, explosion, spawn_fx, spawn_fx_rot, FxKind};
 use crate::enemy::Enemy;
 use crate::grid::Grid;
 use crate::items::{compute_stats, stage_info, Loadout, ModuleKind, Mount, Stats};
+use crate::weapons::{spawn_rig, WeaponAnim};
 use crate::{Banner, GameEntity, GameRng, GameState, MAP_HALF, Shake, Sim};
 use bevy::prelude::*;
 use std::collections::VecDeque;
@@ -254,30 +255,43 @@ fn rebuild_castle(
     let mounts = castle_mounts(loadout.stage);
     let scale = 1.0 + loadout.stage as f32 * 0.25;
     let body = assets.castle[&(loadout.stage, variant)].clone();
-    let modules = assets.modules.clone();
+    let rigs = assets.rigs.clone();
     let owned = loadout.modules.clone();
     commands.entity(e).despawn_related::<Children>().with_children(|p| {
         body.spawn_parts(p, CastlePart);
-        let mut tops = mounts.top.iter();
+        let mut tops = 0;
         for m in &owned {
-            let at = match m.kind.mount() {
-                Mount::Top => *tops.next().unwrap_or(&mounts.top[0]),
-                Mount::Front => mounts.front,
-                Mount::Back => mounts.back,
-                Mount::Side => mounts.side,
+            let (at, turn) = match m.kind.mount() {
+                Mount::Top => {
+                    let i = if tops < mounts.top.len() { tops } else { 0 };
+                    tops += 1;
+                    (mounts.top[i], mounts.top_yaw[i])
+                }
+                Mount::Front => (mounts.front, 0.0),
+                Mount::Back => (mounts.back, 0.0),
+                Mount::Side => (mounts.side, 0.0),
             };
-            let model = modules[&m.kind].clone();
-            p.spawn((CastlePart, ModuleMount(m.kind), Transform::from_translation(at).with_scale(Vec3::splat(scale)), Visibility::Inherited))
-                .with_children(|q| model.spawn_parts(q, ()));
+            let rig = &rigs[&m.kind];
+            let mut gun = p.spawn((
+                CastlePart,
+                ModuleMount(m.kind),
+                WeaponAnim::new(m.kind, 1.0, rig).facing(turn),
+                Transform::from_translation(at).with_rotation(Quat::from_rotation_y(turn)).with_scale(Vec3::splat(scale)),
+                Visibility::Inherited,
+            ));
+            let owner = gun.id();
+            gun.with_children(|q| spawn_rig(q, rig, owner));
             if m.kind.mount() == Mount::Side {
                 // Guns on the other side too, facing out.
                 let mirror = Vec3::new(at.x, at.y, -at.z);
-                p.spawn((
+                let mut gun = p.spawn((
                     CastlePart,
+                    WeaponAnim::new(m.kind, -1.0, rig),
                     Transform::from_translation(mirror).with_rotation(Quat::from_rotation_y(std::f32::consts::PI)).with_scale(Vec3::splat(scale)),
                     Visibility::Inherited,
-                ))
-                .with_children(|q| model.spawn_parts(q, ()));
+                ));
+                let owner = gun.id();
+                gun.with_children(|q| spawn_rig(q, rig, owner));
             }
         }
     });

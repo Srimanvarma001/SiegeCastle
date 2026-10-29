@@ -39,6 +39,8 @@ pub enum Variant {
 /// Where module models sit on each castle stage (model space, +X = front).
 pub struct Mounts {
     pub top: [Vec3; 3],
+    /// Which way each top weapon faces (turn about Y; side-wall ones face out).
+    pub top_yaw: [f32; 3],
     pub front: Vec3,
     pub back: Vec3,
     /// Right side wall; the left side is the mirror (-Z).
@@ -50,30 +52,36 @@ pub struct Mounts {
 }
 
 pub fn castle_mounts(stage: usize) -> Mounts {
+    use std::f32::consts::FRAC_PI_2;
     match stage {
+        // Keep roof, the deck behind the keep, the deck in front of it.
         0 => Mounts {
-            top: [Vec3::new(0.3, 4.75, -0.2), Vec3::new(-2.3, 1.35, -1.15), Vec3::new(2.25, 1.35, -1.2)],
+            top: [Vec3::new(0.1, 4.75, 0.0), Vec3::new(-2.35, 1.35, -0.75), Vec3::new(2.25, 1.35, -1.2)],
+            top_yaw: [0.0; 3],
             front: Vec3::new(3.1, 1.0, 0.0),
             back: Vec3::new(-3.1, 1.1, 0.0),
-            side: Vec3::new(0.3, 2.4, 1.95),
+            side: Vec3::new(0.3, 2.4, 2.05),
             chimney: Vec3::new(1.2, 5.9, -0.9),
             len: 6.2,
             wid: 4.0,
         },
+        // Gate platform, and stone platforms on the side walls.
         1 => Mounts {
-            top: [Vec3::new(3.75, 3.75, 0.0), Vec3::new(-0.6, 3.75, -2.8), Vec3::new(-0.6, 3.75, 2.8)],
+            top: [Vec3::new(3.65, 3.75, 0.0), Vec3::new(-0.6, 3.75, -2.85), Vec3::new(-0.6, 3.75, 2.85)],
+            top_yaw: [0.0, FRAC_PI_2, -FRAC_PI_2],
             front: Vec3::new(4.75, 1.1, 0.0),
             back: Vec3::new(-4.75, 1.2, 0.0),
-            side: Vec3::new(1.4, 2.6, 3.1),
+            side: Vec3::new(1.8, 2.6, 4.0),
             chimney: Vec3::new(-1.3, 7.6, 0.75),
             len: 9.4,
             wid: 6.2,
         },
         _ => Mounts {
-            top: [Vec3::new(5.9, 4.85, -1.5), Vec3::new(0.0, 4.85, -4.25), Vec3::new(0.0, 4.85, 4.25)],
+            top: [Vec3::new(5.5, 4.85, 0.0), Vec3::new(0.0, 4.85, -3.5), Vec3::new(0.0, 4.85, 3.5)],
+            top_yaw: [0.0, FRAC_PI_2, -FRAC_PI_2],
             front: Vec3::new(6.95, 1.2, 0.0),
             back: Vec3::new(-6.95, 1.4, 0.0),
-            side: Vec3::new(1.6, 3.2, 4.6),
+            side: Vec3::new(2.8, 3.2, 5.65),
             chimney: Vec3::new(-1.9, 9.4, 1.1),
             len: 13.6,
             wid: 9.2,

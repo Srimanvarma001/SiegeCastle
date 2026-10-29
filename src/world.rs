@@ -516,7 +516,7 @@ fn absorb(
     }
 }
 
-fn follow_camera(
+pub fn follow_camera(
     time: Res<Time>,
     shake: Res<Shake>,
     loadout: Res<Loadout>,

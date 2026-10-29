@@ -7,6 +7,7 @@ use crate::enemy::{Boss, Enemy};
 use crate::grid::{Grid, GridEntry};
 use crate::items::{level_mult, Loadout, ModuleKind, Stats};
 use crate::player::{Castle, ModuleMount};
+use crate::weapons::WeaponFired;
 use crate::{GameEntity, GameRng, GameState, Shake, Sim};
 use bevy::light::NotShadowCaster;
 use bevy::platform::collections::HashMap;
@@ -76,6 +77,7 @@ fn auto_attacks(
     mounts: Query<(&GlobalTransform, &ModuleMount)>,
     enemies: Query<&Enemy>,
     bosses: Query<(&Transform, &Enemy), With<Boss>>,
+    mut fired: MessageWriter<WeaponFired>,
 ) {
     let Ok((ctf, c)) = castle.single() else {
         return;
@@ -111,6 +113,7 @@ fn auto_attacks(
                     continue;
                 }
                 t.auto = m.kind.auto_cooldown();
+                fired.write(WeaponFired { kind: m.kind, target: Some(targets[0].pos), side: 0.0, reload: t.auto / stats.rate });
                 for i in 0..count {
                     let g = targets[i % targets.len()];
                     let (gpos, vel) = match boss {
@@ -132,6 +135,7 @@ fn auto_attacks(
                 }
                 t.auto = m.kind.auto_cooldown();
                 let shells = 1 + (m.level >= 3) as usize + (m.level >= 5) as usize;
+                let mut aimed = None;
                 for s in 0..shells {
                     let mut best = near[rng.0.random_range(0..near.len())];
                     let mut best_n = 0;
@@ -150,8 +154,10 @@ fn auto_attacks(
                         Some((bp, bv)) if s == 0 => bp + bv * dur,
                         _ => best.pos,
                     };
+                    aimed.get_or_insert(at);
                     spawn_arc(&mut commands, &assets, from + Vec3::Y, at, dur, 12.0, Payload::Shell { dmg, radius });
                 }
+                fired.write(WeaponFired { kind: m.kind, target: aimed, side: 0.0, reload: t.auto / stats.rate });
                 spawn_fx(&mut commands, &assets, FxKind::Smoke, from + Vec3::Y * 1.5, 1.6, Vec3::Y * 3.0);
             }
             ModuleKind::MineLayer => {
@@ -160,18 +166,21 @@ fn auto_attacks(
                     continue;
                 }
                 t.auto = m.kind.auto_cooldown() * 0.88f32.powi(m.level as i32 - 1);
+                fired.write(WeaponFired { kind: m.kind, target: None, side: 0.0, reload: t.auto / stats.rate });
                 drop_mine(&mut commands, &assets, from2 - fwd * 1.0, dmg, (3.0 + 0.2 * m.level as f32) * stats.area);
             }
             ModuleKind::Broadside => {
                 let side = Vec2::new(-fwd.y, fwd.x);
                 let near = nearest_n(&grid, cpos, range, 60);
-                let mut fired = false;
+                let mut shot = false;
                 for s in [-1.0f32, 1.0] {
                     let dir = side * s;
                     if !near.iter().any(|g| (g.pos - cpos).normalize_or_zero().dot(dir) > 0.5) {
                         continue;
                     }
-                    fired = true;
+                    shot = true;
+                    // `s` = +1 fires to the left: the mirrored gun on the castle's -Z wall.
+                    fired.write(WeaponFired { kind: m.kind, target: None, side: -s, reload: m.kind.auto_cooldown() / stats.rate });
                     let balls = 1 + m.level / 2;
                     for b in 0..balls {
                         let spread = (b as f32 - (balls - 1) as f32 / 2.0) * 0.12;
@@ -179,7 +188,7 @@ fn auto_attacks(
                         fire_cannonball(&mut commands, &assets, cpos + d * (c.radius + 0.5), d * 34.0 + c.vel * 0.5, dmg, 1 + m.level, range / 34.0);
                     }
                 }
-                t.auto = if fired { m.kind.auto_cooldown() } else { 0.15 };
+                t.auto = if shot { m.kind.auto_cooldown() } else { 0.15 };
             }
             ModuleKind::Ballista => {
                 // A boss in range first, otherwise the nearest enemy.
@@ -193,6 +202,7 @@ fn auto_attacks(
                 t.auto = m.kind.auto_cooldown() * 0.9f32.powi(m.level as i32 - 1);
                 let lead = tpos + tvel * (tpos.distance(from2) / 60.0);
                 let dir = (lead - from2).normalize_or(fwd);
+                fired.write(WeaponFired { kind: m.kind, target: Some(lead), side: 0.0, reload: t.auto / stats.rate });
                 fire_bolt(&mut commands, &assets, from2, dir, dmg, 4 + m.level * 2, range / 60.0);
             }
             ModuleKind::Ram => {}
@@ -248,6 +258,7 @@ fn use_abilities(
     mut shake: ResMut<Shake>,
     mut castle: Query<(&Transform, &mut Castle)>,
     mounts: Query<(&GlobalTransform, &ModuleMount)>,
+    mut fired: MessageWriter<WeaponFired>,
 ) {
     let Ok((ctf, mut c)) = castle.single_mut() else {
         return;
@@ -256,13 +267,19 @@ fn use_abilities(
     let fwd = Vec2::from_angle(c.heading);
     for (slot, m) in loadout.modules.iter().enumerate() {
         let t = cds.0.entry(m.kind).or_default();
-        let pressed = keys.just_pressed(ABILITY_KEYS[slot]) || (auto.0 && (m.kind != ModuleKind::Ram || grid.nearest(cpos + fwd * 12.0, 8.0).is_some()));
+        let pressed = ABILITY_KEYS.get(slot).is_some_and(|k| keys.just_pressed(*k)) || (auto.0 && (m.kind != ModuleKind::Ram || grid.nearest(cpos + fwd * 12.0, 8.0).is_some()));
         if !pressed || t.ability > 0.0 {
             continue;
         }
         t.ability = m.kind.ability_cooldown() * stats.ability_cd;
         let dmg = m.kind.damage() * level_mult(m.level) * stats.damage;
         let from = mount_pos(&mounts, m.kind, ctf.translation + Vec3::Y * 3.0);
+        let target = match m.kind {
+            ModuleKind::Mortar => Some(cpos - fwd * (c.radius + 8.0)),
+            ModuleKind::Ballista => Some(p2(from) + fwd * 20.0),
+            _ => None,
+        };
+        fired.write(WeaponFired { kind: m.kind, target, side: 0.0, reload: 0.9 });
         match m.kind {
             ModuleKind::ArrowLoft => {
                 for _ in 0..(30 + 6 * m.level) {

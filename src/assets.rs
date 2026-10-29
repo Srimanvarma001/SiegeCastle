@@ -6,6 +6,8 @@ use crate::enemy::EnemyKind;
 use crate::items::ModuleKind;
 use crate::models::{self, Mat, Model};
 use crate::texgen::{self, Surface};
+use crate::weapon_models;
+use crate::weapons::{PartHandle, RigHandle};
 use bevy::math::Affine2;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
@@ -35,7 +37,10 @@ impl ModelHandle {
 pub struct GameAssets {
     /// Castle per (stage, variant).
     pub castle: HashMap<(usize, Variant), ModelHandle>,
+    /// Weapons in their rest pose (card portraits).
     pub modules: HashMap<ModuleKind, ModelHandle>,
+    /// Weapons as a mount plus moving parts (on the castle).
+    pub rigs: HashMap<ModuleKind, RigHandle>,
     /// Troops: one vertex-colored mesh each.
     pub enemies: HashMap<EnemyKind, Handle<Mesh>>,
     pub bosses: HashMap<EnemyKind, ModelHandle>,
@@ -210,7 +215,19 @@ pub fn create_assets(
             castle.insert((stage, v), upload(&mut meshes, &mats, models::castle(stage, v)));
         }
     }
-    let modules = ModuleKind::ALL.iter().map(|&k| (k, upload(&mut meshes, &mats, models::module(k)))).collect();
+    let modules = ModuleKind::ALL.iter().map(|&k| (k, upload(&mut meshes, &mats, weapon_models::rig(k).combined()))).collect();
+    let rigs = ModuleKind::ALL
+        .iter()
+        .map(|&k| {
+            let rig = weapon_models::rig(k);
+            let parts = rig
+                .parts
+                .into_iter()
+                .map(|p| PartHandle { role: p.role, parent: p.parent, rest: p.rest, model: upload(&mut meshes, &mats, p.model) })
+                .collect();
+            (k, RigHandle { base: upload(&mut meshes, &mats, rig.base), parts })
+        })
+        .collect();
     let mut enemies = HashMap::default();
     enemies.insert(EnemyKind::Footman, meshes.add(models::footman()));
     enemies.insert(EnemyKind::Archer, meshes.add(models::archer()));
@@ -297,6 +314,7 @@ pub fn create_assets(
     commands.insert_resource(GameAssets {
         castle,
         modules,
+        rigs,
         enemies,
         bosses,
         villages: (0..4).map(|i| upload(&mut meshes, &mats, models::village(i))).collect(),

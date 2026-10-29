@@ -27,6 +27,8 @@ mod player;
 mod previews;
 mod progression;
 mod texgen;
+mod weapon_models;
+mod weapons;
 mod world;
 
 /// The battlefield is a square from -MAP_HALF to +MAP_HALF (world units).
@@ -132,6 +134,7 @@ fn main() {
             world::WorldPlugin,
             player::PlayerPlugin,
             modules::ModulesPlugin,
+            weapons::WeaponsPlugin,
             enemy::EnemyPlugin,
             combat::CombatPlugin,
             director::DirectorPlugin,
