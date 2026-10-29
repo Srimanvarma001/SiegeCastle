@@ -113,24 +113,13 @@ pub struct Mats {
     /// Vertex-colored, for troops and small details.
     pub vc: Handle<StandardMaterial>,
     pub flash: Handle<StandardMaterial>,
-    pub fire: Handle<StandardMaterial>,
-    pub spark: Handle<StandardMaterial>,
-    pub smoke: Handle<StandardMaterial>,
-    pub smoke_dark: Handle<StandardMaterial>,
-    pub track: Handle<StandardMaterial>,
-    pub scorch: Handle<StandardMaterial>,
-    pub dirt: Handle<StandardMaterial>,
     pub debris: Handle<StandardMaterial>,
-    pub blood: Handle<StandardMaterial>,
     pub water: Handle<StandardMaterial>,
     pub telegraph: Handle<StandardMaterial>,
     pub cannonball: Handle<StandardMaterial>,
     pub stone: Handle<StandardMaterial>,
     pub grass: Handle<StandardMaterial>,
     pub road: Handle<StandardMaterial>,
-    /// Smoke at decreasing opacity, swapped in as a puff ages.
-    pub smoke_fade: Vec<Handle<StandardMaterial>>,
-    pub smoke_dark_fade: Vec<Handle<StandardMaterial>>,
 }
 
 /// Meters covered by one repeat of each texture.
@@ -277,32 +266,10 @@ pub fn create_assets(
     let vfx = crate::vfx::build_assets(&mut meshes, &mut materials, &mut images);
 
     let glow = |c: Color, e: LinearRgba| StandardMaterial { base_color: c, emissive: e, unlit: true, ..default() };
-    let soft = |c: Color, a: f32| StandardMaterial {
-        base_color: c.with_alpha(a),
-        perceptual_roughness: 1.0,
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    };
-    let mud = textured(&tex[&Surface::Mud], tile_size(Surface::Mud), StandardMaterial::default());
     let m = Mats {
         vc: mats[&Mat::Paint].clone(),
         flash: materials.add(glow(Color::WHITE, LinearRgba::rgb(3.0, 2.6, 2.2))),
-        fire: materials.add(glow(Color::srgb(1.0, 0.7, 0.3), LinearRgba::rgb(14.0, 5.5, 1.2))),
-        spark: materials.add(glow(Color::srgb(1.0, 0.85, 0.5), LinearRgba::rgb(7.0, 4.0, 1.2))),
-        smoke: materials.add(soft(Color::srgb(0.82, 0.81, 0.79), 0.38)),
-        smoke_dark: materials.add(soft(Color::srgb(0.16, 0.14, 0.13), 0.6)),
-        track: materials.add(StandardMaterial {
-            base_color: Color::srgba(0.85, 0.8, 0.75, 0.85),
-            base_color_texture: Some(road_tex.clone()),
-            alpha_mode: AlphaMode::Blend,
-            perceptual_roughness: 0.95,
-            cull_mode: None,
-            ..default()
-        }),
-        scorch: materials.add(StandardMaterial { base_color: Color::srgb(0.25, 0.2, 0.18), ..mud.clone() }),
-        dirt: materials.add(mud),
         debris: mats[&Mat::Wood].clone(),
-        blood: materials.add(StandardMaterial { base_color: Color::srgb(0.30, 0.10, 0.07), perceptual_roughness: 0.5, ..default() }),
         water: materials.add(StandardMaterial {
             base_color: Color::srgb(0.17, 0.27, 0.29),
             perceptual_roughness: 0.12,
@@ -324,8 +291,6 @@ pub fn create_assets(
         }),
         stone: mats[&Mat::Stone].clone(),
         grass: materials.add(textured(&tex[&Surface::Grass], tile_size(Surface::Grass), StandardMaterial::default())),
-        smoke_fade: [0.42, 0.34, 0.26, 0.18, 0.1].iter().map(|a| materials.add(soft(Color::srgb(0.84, 0.83, 0.81), *a))).collect(),
-        smoke_dark_fade: [0.6, 0.48, 0.36, 0.24, 0.12].iter().map(|a| materials.add(soft(Color::srgb(0.16, 0.14, 0.13), *a))).collect(),
         road: materials.add(StandardMaterial {
             base_color_texture: Some(road_tex.clone()),
             alpha_mode: AlphaMode::Blend,

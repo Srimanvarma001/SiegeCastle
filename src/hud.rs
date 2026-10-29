@@ -232,7 +232,12 @@ fn spawn_hud(mut commands: Commands, icons: Res<Icons>) {
                                 children![gloss()],
                             ),
                             ticks(),
-                            (XpText, text("", 12.0, Color::srgba(1.0, 0.95, 0.85, 0.9)), shadow()),
+                            // On a dark pill, so the numbers read over the gold fill too.
+                            (
+                                Node { padding: UiRect::axes(Val::Px(7.0), Val::Px(0.0)), border_radius: round(7.0), ..default() },
+                                BackgroundColor(Color::srgba(0.05, 0.035, 0.02, 0.6)),
+                                children![(XpText, text("", 12.0, Color::srgba(1.0, 0.95, 0.85, 0.95)), shadow())],
+                            ),
                         ],
                     ),
                     (
@@ -1003,8 +1008,8 @@ fn update_banner(
     banner: Res<Banner>,
     mut anim: ResMut<HudAnim>,
     mut boxes: Query<&mut UiTransform, With<BannerBox>>,
-    mut main: Query<(&mut Text, &mut TextColor), (With<BannerText>, Without<BannerSub>)>,
-    mut sub: Query<(&mut Text, &mut TextColor), (With<BannerSub>, Without<BannerText>)>,
+    mut main: Query<(&mut Text, &mut TextColor, &mut TextShadow), (With<BannerText>, Without<BannerSub>)>,
+    mut sub: Query<(&mut Text, &mut TextColor, &mut TextShadow), (With<BannerSub>, Without<BannerText>)>,
 ) {
     // New messages swing in large and settle.
     if banner.text != anim.banner && banner.timer > 0.0 {
@@ -1018,18 +1023,21 @@ fn update_banner(
         tf.scale = Vec2::splat(1.0 + 0.35 * (1.0 - k));
     }
     let fade_in = (anim.banner_t / 0.2).min(1.0);
-    if let Ok((mut t, mut c)) = main.single_mut() {
+    // The drop shadows fade with the text, or they would stay behind on screen.
+    if let Ok((mut t, mut c, mut s)) = main.single_mut() {
         if t.0 != banner.text {
             t.0 = banner.text.clone();
         }
         c.0 = Color::srgba(1.0, 0.93, 0.78, a * fade_in);
+        s.color = Color::srgba(0.0, 0.0, 0.0, 0.9 * a * fade_in);
     }
-    if let Ok((mut t, mut c)) = sub.single_mut() {
+    if let Ok((mut t, mut c, mut s)) = sub.single_mut() {
         if t.0 != banner.sub {
             t.0 = banner.sub.clone();
         }
         let late = ((anim.banner_t - 0.15) / 0.3).clamp(0.0, 1.0);
         c.0 = Color::srgba(1.0, 1.0, 1.0, a * 0.9 * late);
+        s.color = Color::srgba(0.0, 0.0, 0.0, 0.85 * a * late);
     }
 }
 
