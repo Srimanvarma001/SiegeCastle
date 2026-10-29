@@ -37,6 +37,8 @@ pub enum Payload {
     Shell { dmg: f32, radius: f32 },
     EnemyArrow { dmg: f32 },
     Boulder { dmg: f32, radius: f32 },
+    /// Bursts into burning ground.
+    FirePot { dmg: f32, radius: f32 },
 }
 
 #[derive(Component)]
@@ -54,7 +56,8 @@ pub fn spawn_arc(commands: &mut Commands, assets: &GameAssets, from: Vec3, to: V
         Payload::Arrow { .. } => (assets.arrow.clone(), assets.m.vc.clone(), Vec3::ONE),
         Payload::EnemyArrow { .. } => (assets.enemy_arrow.clone(), assets.m.vc.clone(), Vec3::ONE),
         Payload::Shell { .. } => (assets.ball.clone(), assets.m.cannonball.clone(), Vec3::splat(0.8)),
-        Payload::Boulder { .. } => (assets.ball.clone(), assets.m.stone.clone(), Vec3::splat(1.8)),
+        Payload::Boulder { radius, .. } => (assets.ball.clone(), assets.m.stone.clone(), Vec3::splat((radius * 0.55).max(1.8))),
+        Payload::FirePot { .. } => (assets.ball.clone(), assets.m.fire.clone(), Vec3::splat(1.6)),
     };
     commands.spawn((
         GameEntity,
@@ -124,7 +127,15 @@ fn update_arcs(
                     c.hurt(dmg);
                     shake.0 += 0.8;
                 }
+                // Boss boulders crush their own troops too.
+                damage_troops(&grid, &mut enemies, at, radius, dmg * 2.0);
                 explosion(&mut commands, &assets, &mut rng, at, radius * 0.8);
+                spawn_fx(&mut commands, &assets, FxKind::Shockwave, w3(at, 0.6), radius * 1.4, Vec3::ZERO);
+                shake.0 += 0.3;
+            }
+            Payload::FirePot { dmg, radius } => {
+                explosion(&mut commands, &assets, &mut rng, at, radius * 0.5);
+                crate::boss::spawn_fire(&mut commands, &assets, at, radius, dmg, 7.0);
             }
         }
     }
@@ -196,7 +207,7 @@ fn update_bullets(
             grid.for_each_near(at, b.radius + MAX_ENEMY_RADIUS, |g| {
                 if hit.is_none() && !b.hits.contains(&g.entity) {
                     let reach = b.radius + g.radius;
-                    if g.pos.distance_squared(at) < reach * reach {
+                    if g.dist2(at) < reach * reach {
                         hit = Some(g.entity);
                     }
                 }
@@ -268,7 +279,7 @@ fn update_mines(
 pub fn damage_area(grid: &Grid, enemies: &mut Query<&mut Enemy>, pos: Vec2, radius: f32, dmg: f32, knock: f32) {
     grid.for_each_near(pos, radius + MAX_ENEMY_RADIUS, |g| {
         let reach = radius + g.radius;
-        let d = g.pos - pos;
+        let d = g.closest(pos) - pos;
         if d.length_squared() < reach * reach
             && let Ok(mut en) = enemies.get_mut(g.entity)
         {
@@ -276,6 +287,21 @@ pub fn damage_area(grid: &Grid, enemies: &mut Query<&mut Enemy>, pos: Vec2, radi
             if !en.kind.is_boss() {
                 en.knock += d.normalize_or(Vec2::X) * knock;
             }
+        }
+    });
+}
+
+/// Like `damage_area`, but bosses are not hurt.
+fn damage_troops(grid: &Grid, enemies: &mut Query<&mut Enemy>, pos: Vec2, radius: f32, dmg: f32) {
+    grid.for_each_near(pos, radius + MAX_ENEMY_RADIUS, |g| {
+        let reach = radius + g.radius;
+        if g.axis == Vec2::ZERO
+            && g.radius <= MAX_ENEMY_RADIUS
+            && g.pos.distance_squared(pos) < reach * reach
+            && let Ok(mut en) = enemies.get_mut(g.entity)
+        {
+            en.hit(dmg);
+            en.knock += (g.pos - pos).normalize_or(Vec2::X) * 12.0;
         }
     });
 }
@@ -312,67 +338,73 @@ fn enemy_deaths(
     mut progress: ResMut<Progress>,
     mut defeated: MessageWriter<BossDefeated>,
     enemies: Query<(Entity, &Transform, &Enemy, Option<&Boss>, Option<&Mesh3d>)>,
+    castle: Query<&Transform, With<Castle>>,
     coins: Query<(), With<Coin>>,
     corpses: Query<(), With<Corpse>>,
 ) {
     let mut coin_count = coins.iter().count();
     let mut corpse_count = corpses.iter().count();
+    let cpos = castle.single().map(|t| p2(t.translation)).unwrap_or_default();
     for (e, tf, en, boss, mesh) in &enemies {
         if en.hp > 0.0 {
             continue;
         }
-        commands.entity(e).despawn();
         stats.kills += 1;
         let pos = p2(tf.translation);
-        if let Some(b) = boss {
-            if let Some(t) = b.telegraph {
-                commands.entity(t).despawn();
-            }
-            for i in 0..6 {
-                let off = Vec2::from_angle(i as f32) * en.radius * 0.6;
-                explosion(&mut commands, &assets, &mut rng, pos + off, en.radius * 0.7);
-            }
-            for _ in 0..10 {
-                let off = Vec3::new(rng.0.random_range(-1.0..1.0), 0.0, rng.0.random_range(-1.0..1.0)) * en.radius;
-                spawn_fx(&mut commands, &assets, FxKind::DarkSmoke, w3(pos, 2.0) + off, en.radius * 0.8, Vec3::Y * 3.0);
-            }
-            shake.0 += 3.0;
+        if boss.is_some() {
+            // Bosses play their collapse, then drop their gold.
+            crate::boss::begin_wreck(&mut commands, e, en, tf, cpos);
+            shake.0 += 2.0;
             stats.bosses_killed += 1;
             defeated.write(BossDefeated(en.kind));
-        } else {
-            spawn_fx(&mut commands, &assets, FxKind::Blood, w3(pos, 0.02), 0.5 + en.radius * 0.6, Vec3::ZERO);
-            if en.kind == EnemyKind::Cart {
-                explosion(&mut commands, &assets, &mut rng, pos, 2.0);
-            }
-            if let Some(mesh) = mesh
-                && corpse_count < MAX_CORPSES
-            {
-                corpse_count += 1;
-                spawn_corpse(&mut commands, &assets, en, tf, mesh);
-            }
+            continue;
         }
+        commands.entity(e).despawn();
+        spawn_fx(&mut commands, &assets, FxKind::Blood, w3(pos, 0.02), 0.5 + en.radius * 0.6, Vec3::ZERO);
+        if en.kind == EnemyKind::Cart {
+            explosion(&mut commands, &assets, &mut rng, pos, 2.0);
+        }
+        if let Some(mesh) = mesh
+            && corpse_count < MAX_CORPSES
+        {
+            corpse_count += 1;
+            spawn_corpse(&mut commands, &assets, en, tf, mesh);
+        }
+        drop_coins(&mut commands, &assets, &mut progress, &mut coin_count, pos, en.coins, en.radius + 2.0);
+    }
+}
 
-        let pieces = en.coins.min(30);
-        let value = en.coins as f32 / pieces.max(1) as f32;
-        for i in 0..pieces {
-            if coin_count >= MAX_COINS {
-                progress.add_xp(value);
-                continue;
-            }
-            coin_count += 1;
-            let off = if pieces > 1 {
-                Vec2::from_angle(i as f32 * 2.4) * (0.5 + i as f32 * 0.25).min(en.radius + 2.0)
-            } else {
-                Vec2::ZERO
-            };
-            commands.spawn((
-                GameEntity,
-                Coin { xp: value },
-                Mesh3d(assets.coin.0[0].0.clone()),
-                MeshMaterial3d(assets.coin.0[0].1.clone()),
-                Transform::from_translation(w3(pos + off, 0.6)),
-            ));
+/// Scatters `coins` worth of gold around `pos`, in at most 30 pieces.
+/// Past the coin limit the XP goes straight to the castle.
+pub fn drop_coins(
+    commands: &mut Commands,
+    assets: &GameAssets,
+    progress: &mut Progress,
+    coin_count: &mut usize,
+    pos: Vec2,
+    coins: u32,
+    spread: f32,
+) {
+    let pieces = coins.min(30);
+    let value = coins as f32 / pieces.max(1) as f32;
+    for i in 0..pieces {
+        if *coin_count >= MAX_COINS {
+            progress.add_xp(value);
+            continue;
         }
+        *coin_count += 1;
+        let off = if pieces > 1 {
+            Vec2::from_angle(i as f32 * 2.4) * (0.5 + i as f32 * 0.25).min(spread)
+        } else {
+            Vec2::ZERO
+        };
+        commands.spawn((
+            GameEntity,
+            Coin { xp: value },
+            Mesh3d(assets.coin.0[0].0.clone()),
+            MeshMaterial3d(assets.coin.0[0].1.clone()),
+            Transform::from_translation(w3(pos + off, 0.6)),
+        ));
     }
 }
 
@@ -424,6 +456,12 @@ pub enum FxKind {
     Track,
     Dirt,
     Telegraph { dur: f32 },
+    /// A faint red disc under a telegraph ring.
+    Zone { dur: f32 },
+    /// A red strip on the ground (charges, broadsides). Sized by its spawner.
+    Lane { dur: f32 },
+    /// A ring of dust racing outward.
+    Shockwave,
 }
 
 #[derive(Component)]
@@ -448,6 +486,9 @@ pub fn spawn_fx(commands: &mut Commands, assets: &GameAssets, kind: FxKind, pos:
         FxKind::Track => (&assets.rut, &m.track, 7.0, Vec3::new(size * 2.4, 1.0, size * 1.4)),
         FxKind::Dirt => (&assets.cube, &m.dirt, 60.0, Vec3::new(size, 0.03, size * 0.8)),
         FxKind::Telegraph { dur } => (&assets.ring, &m.telegraph, dur, Vec3::splat(size * 0.2)),
+        FxKind::Zone { dur } => (&assets.disc, &m.warn, dur, Vec3::new(size * 2.0, 0.03, size * 2.0)),
+        FxKind::Lane { dur } => (&assets.cube, &m.warn, dur, Vec3::ONE),
+        FxKind::Shockwave => (&assets.ring, &m.smoke, 0.55, Vec3::splat(size * 0.2)),
     };
     commands
         .spawn((
@@ -518,6 +559,16 @@ fn update_fx(
             FxKind::Telegraph { .. } => {
                 let k = 0.2 + age * 0.8;
                 tf.scale = Vec3::new(s * k, 0.6, s * k);
+            }
+            FxKind::Zone { .. } | FxKind::Lane { .. } => {}
+            FxKind::Shockwave => {
+                let k = 0.25 + age.sqrt() * 0.85;
+                tf.scale = Vec3::new(s * k, 2.5 * (1.0 - age) + 0.2, s * k);
+                let fades = &assets.m.smoke_fade;
+                let i = ((age * fades.len() as f32) as usize).min(fades.len() - 1);
+                if mat.0 != fades[i] {
+                    mat.0 = fades[i].clone();
+                }
             }
         }
     }

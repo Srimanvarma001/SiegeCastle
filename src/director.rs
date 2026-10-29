@@ -5,10 +5,10 @@
 use crate::art::p2;
 use crate::assets::GameAssets;
 use crate::combat::BossDefeated;
-use crate::enemy::{spawn_enemy, Enemy, EnemyKind, Strength};
+use crate::enemy::{spawn_boss, spawn_enemy, Enemy, EnemyKind, Strength};
 use crate::items::Loadout;
 use crate::player::Castle;
-use crate::{Banner, GameRng, GameState, MAP_HALF, RunStats, Sim};
+use crate::{Banner, GameRng, GameState, MAP_HALF, RunStats, Shake, Sim};
 use bevy::prelude::*;
 use rand::Rng;
 
@@ -126,6 +126,7 @@ fn run_director(
     mut d: ResMut<Director>,
     mut rng: ResMut<GameRng>,
     mut banner: ResMut<Banner>,
+    mut shake: ResMut<Shake>,
     castle: Query<(&Transform, &Castle)>,
     enemies: Query<(), With<Enemy>>,
 ) {
@@ -204,14 +205,20 @@ fn run_director(
         d.boss_timer = f32::INFINITY;
         return;
     };
+    // Bosses are colossal: they appear well out of sight and roll in.
+    // The twin War Wagons come from opposite sides.
     let count = if kind == EnemyKind::WarWagon { 2 } else { 1 };
     let angle = rng.0.random::<f32>() * std::f32::consts::TAU;
+    let ext = kind.stats().radius + kind.half_len();
+    let lim = MAP_HALF - ext - 2.0;
     for i in 0..count {
-        let p = spawn_point(cpos, angle + i as f32 * 0.5, view + 12.0);
-        spawn_enemy(&mut commands, &assets, kind, p, (cpos - p).to_angle(), Vec2::ZERO, boss_strength);
+        let p = (cpos + Vec2::from_angle(angle + i as f32 * std::f32::consts::PI) * (view + ext + 25.0)).clamp(Vec2::splat(-lim), Vec2::splat(lim));
+        spawn_boss(&mut commands, &assets, kind, p, (cpos - p).to_angle(), boss_strength, i);
     }
-    let title = if count > 1 { "Twin War Wagons approach!".to_string() } else { format!("{} approaches!", kind.name()) };
-    banner.show(title, "Follow the red arrow", 4.0);
+    let s = crate::boss::spec(kind);
+    let verb = if count > 1 { "APPROACH" } else { "APPROACHES" };
+    banner.show(format!("{} {}", s.title, verb), s.hint, 5.0);
+    shake.0 += 1.0;
 }
 
 fn on_boss_defeated(

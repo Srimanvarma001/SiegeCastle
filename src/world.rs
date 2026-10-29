@@ -21,7 +21,7 @@ const VILLAGES: usize = 42;
 const SHEEP: usize = 110;
 
 /// Camera height above the castle at stage 1, before the player's own zoom.
-const CAMERA_HEIGHT: f32 = 58.0;
+pub const CAMERA_HEIGHT: f32 = 58.0;
 /// Extra height per castle stage, so the bigger castles still fit.
 const STAGE_ZOOM: [f32; 3] = [1.0, 1.2, 1.4];
 /// How far the mouse wheel (or - and =) can zoom in and out.
@@ -523,6 +523,7 @@ fn follow_camera(
     loadout: Res<Loadout>,
     scroll: Res<AccumulatedMouseScroll>,
     keys: Res<ButtonInput<KeyCode>>,
+    boss: Res<crate::boss::BossCam>,
     mut rng: ResMut<GameRng>,
     castle: Query<(&Transform, &Castle), Without<MainCamera>>,
     mut cam: Query<(&mut Transform, &mut DistanceFog), With<MainCamera>>,
@@ -558,9 +559,10 @@ fn follow_camera(
     }
     player.current += (player.target - player.current) * (1.0 - (-10.0 * dt).exp());
 
-    let want_zoom = STAGE_ZOOM[loadout.stage.min(2)];
-    *zoom += (want_zoom - *zoom) * (1.0 - (-1.5 * dt).exp());
-    let target = p2(ctf.translation) + c.vel * 0.3;
+    // Pull back when a colossal boss is near so both it and the castle fit.
+    let want_zoom = STAGE_ZOOM[loadout.stage.min(2)].max(boss.zoom);
+    *zoom += (want_zoom - *zoom) * (1.0 - (-1.2 * dt).exp());
+    let target = p2(ctf.translation) + c.vel * 0.3 + boss.offset;
     *focus = focus.lerp(target, 1.0 - (-5.0 * dt).exp());
     let h = CAMERA_HEIGHT * *zoom * player.current;
     // The haze was tuned for a camera 40 m up (starting at 70 m, full at 260 m).

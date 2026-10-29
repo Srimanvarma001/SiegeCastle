@@ -12,6 +12,8 @@
 //! - `SIEGE_ENDLESS=1`       start directly in endless mode
 //! - `SIEGE_GOD=1`           castle cannot be destroyed
 //! - `SIEGE_GALLERY=1`       spawn all five bosses around the castle at once
+//! - `SIEGE_BOSS=3`          spawn boss 1-5 near the castle right away
+//! - `SIEGE_STILL=1`         with the autopilot: stand still (for screenshots)
 //! - `SIEGE_LOWRES=1`        small window (fast tests without a GPU)
 //! - `SIEGE_PROFILE=1`       with `SIEGE_LOG`, also print main-thread and
 //!                           render-thread time per frame and the slowest GPU passes
@@ -57,6 +59,7 @@ impl Plugin for DebugPlugin {
             endless: env("SIEGE_ENDLESS").is_some(),
             god: env("SIEGE_GOD").is_some(),
             gallery: env("SIEGE_GALLERY").is_some(),
+            boss: env("SIEGE_BOSS").and_then(|v| v.parse().ok()),
             next_log: 0.0,
             manual_shots: 0,
             applied: false,
@@ -143,6 +146,7 @@ struct DebugConfig {
     endless: bool,
     god: bool,
     gallery: bool,
+    boss: Option<usize>,
     next_log: f32,
     manual_shots: u32,
     applied: bool,
@@ -202,12 +206,17 @@ fn autopilot(
     loadout: Res<Loadout>,
     mut rng: ResMut<GameRng>,
     castle: Query<(&Transform, &Castle)>,
-    bosses: Query<&Transform, With<Boss>>,
+    bosses: Query<(&Transform, &Enemy), With<Boss>>,
     enemies: Query<&Transform, (With<Enemy>, Without<Boss>)>,
 ) {
     let Ok((tf, c)) = castle.single() else {
         return;
     };
+    if std::env::var("SIEGE_STILL").is_ok() {
+        input.dir = Vec2::ZERO;
+        input.nitro = false;
+        return;
+    }
     let pos = p2(tf.translation);
     let (mut sum, mut n) = (Vec2::ZERO, 0.0);
     for t in &enemies {
@@ -219,10 +228,11 @@ fn autopilot(
     }
     let boss = bosses
         .iter()
-        .map(|t| p2(t.translation))
-        .min_by(|a, b| a.distance_squared(pos).total_cmp(&b.distance_squared(pos)));
+        .map(|(t, e)| (p2(t.translation), e.radius + e.half_len))
+        .min_by(|a, b| a.0.distance_squared(pos).total_cmp(&b.0.distance_squared(pos)));
     let (center, radius) = match boss {
-        Some(b) => (b, 24.0),
+        // Circle bosses just outside their reach.
+        Some((b, size)) => (b, size + 20.0),
         // Ram through crowds when we have a ram, otherwise circle them.
         None if n > 6.0 => (sum / n, if loadout.module(crate::items::ModuleKind::Ram).is_some() { 9.0 } else { 20.0 }),
         None => (Vec2::ZERO, 50.0),
@@ -246,13 +256,25 @@ fn cheats(
 ) {
     if !cfg.applied {
         cfg.applied = true;
+        let c = positions.single().map(|t| p2(t.translation)).unwrap_or_default();
         if cfg.gallery {
-            let c = positions.single().map(|t| p2(t.translation)).unwrap_or_default();
             for (i, kind) in BOSSES.iter().enumerate() {
-                let p = c + Vec2::from_angle(i as f32 / 5.0 * std::f32::consts::TAU + 0.3) * 30.0;
-                crate::enemy::spawn_enemy(&mut commands, &assets, *kind, p, (c - p).to_angle(), Vec2::ZERO, director.strength);
+                let p = c + Vec2::from_angle(i as f32 / 5.0 * std::f32::consts::TAU + 0.3) * 95.0;
+                crate::enemy::spawn_boss(&mut commands, &assets, *kind, p, (c - p).to_angle(), director.strength, i);
             }
             director.boss_index = BOSSES.len();
+            director.boss_timer = f32::INFINITY;
+        }
+        if let Some(n) = cfg.boss
+            && let Some(&kind) = BOSSES.get(n.saturating_sub(1))
+        {
+            let count = if kind == crate::enemy::EnemyKind::WarWagon { 2 } else { 1 };
+            let ext = kind.stats().radius + kind.half_len();
+            for i in 0..count {
+                let p = c + Vec2::from_angle(0.6 + i as f32 * std::f32::consts::PI) * (ext + 26.0);
+                crate::enemy::spawn_boss(&mut commands, &assets, kind, p, (c - p).to_angle(), director.strength, i);
+            }
+            director.boss_index = n.min(BOSSES.len());
             director.boss_timer = f32::INFINITY;
         }
         if let Some(lvl) = cfg.start_level {

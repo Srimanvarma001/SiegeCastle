@@ -15,6 +15,9 @@ use rand::rngs::SmallRng;
 
 mod art;
 mod assets;
+mod boss;
+mod boss_ai;
+mod boss_models;
 mod combat;
 mod debug;
 mod director;
@@ -166,6 +169,7 @@ fn main() {
             player::PlayerPlugin,
             modules::ModulesPlugin,
             enemy::EnemyPlugin,
+            boss::BossPlugin,
             combat::CombatPlugin,
             director::DirectorPlugin,
             progression::ProgressionPlugin,
