@@ -61,13 +61,14 @@ impl EnemyKind {
             EnemyKind::Knight => (45.0, 9.5, 0.9, 8.0, 3),
             EnemyKind::Cart => (140.0, 6.5, 1.6, 14.0, 6),
             // Bosses: `radius` is the thickness of their capsule-shaped body.
-            // Health is tuned so each fight lasts about a minute or more: in a
-            // full autopilot run (Oct 2026) the first values went down in 20-40 s.
-            EnemyKind::SiegeTower => (2800.0, 3.4, 10.0, 14.0, 50),
-            EnemyKind::WarWagon => (2000.0, 8.5, 6.0, 12.0, 35),
+            // Health is tuned so each fight lasts one to two minutes in a full
+            // autopilot run (Oct 2026: Siege Tower ~95 s, War Wagons ~65 s,
+            // Juggernaut ~80 s, Trebuchet ~105 s, Warlord ~115 s).
+            EnemyKind::SiegeTower => (2400.0, 3.4, 10.0, 14.0, 50),
+            EnemyKind::WarWagon => (2400.0, 8.5, 6.0, 12.0, 35),
             EnemyKind::Juggernaut => (5200.0, 5.0, 9.0, 20.0, 70),
-            EnemyKind::Trebuchet => (10000.0, 3.0, 14.0, 14.0, 80),
-            EnemyKind::Warlord => (20000.0, 3.0, 22.0, 24.0, 200),
+            EnemyKind::Trebuchet => (8000.0, 3.0, 14.0, 14.0, 80),
+            EnemyKind::Warlord => (15000.0, 3.0, 22.0, 24.0, 200),
         };
         EnemyStats { hp, speed, radius, dps, coins }
     }
