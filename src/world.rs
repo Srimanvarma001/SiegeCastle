@@ -520,13 +520,14 @@ fn follow_camera(
     time: Res<Time>,
     shake: Res<Shake>,
     loadout: Res<Loadout>,
+    boss: Res<crate::boss::BossCam>,
     mut rng: ResMut<GameRng>,
     castle: Query<(&Transform, &Castle), Without<Camera3d>>,
-    mut cam: Query<&mut Transform, With<Camera3d>>,
+    mut cam: Query<(&mut Transform, &mut DistanceFog), With<Camera3d>>,
     mut zoom: Local<f32>,
     mut focus: Local<Vec2>,
 ) {
-    let (Ok((ctf, c)), Ok(mut tf)) = (castle.single(), cam.single_mut()) else {
+    let (Ok((ctf, c)), Ok((mut tf, mut fog))) = (castle.single(), cam.single_mut()) else {
         return;
     };
     let dt = time.delta_secs().min(0.1);
@@ -534,9 +535,15 @@ fn follow_camera(
         *zoom = 1.0;
         *focus = p2(ctf.translation);
     }
-    let want_zoom = [1.0, 1.3, 1.65][loadout.stage.min(2)];
-    *zoom += (want_zoom - *zoom) * (1.0 - (-1.5 * dt).exp());
-    let target = p2(ctf.translation) + c.vel * 0.3;
+    // Pull back when a colossal boss is near so both it and the castle fit.
+    let want_zoom = [1.0f32, 1.3, 1.65][loadout.stage.min(2)].max(boss.zoom);
+    *zoom += (want_zoom - *zoom) * (1.0 - (-1.2 * dt).exp());
+    let target = p2(ctf.translation) + c.vel * 0.3 + boss.offset;
+    // The haze starts further away as the camera rises.
+    if let FogFalloff::Linear { start, end } = &mut fog.falloff {
+        *start = 70.0 * *zoom;
+        *end = 260.0 * *zoom;
+    }
     *focus = focus.lerp(target, 1.0 - (-5.0 * dt).exp());
     let h = 40.0 * *zoom;
     let mut look = w3(*focus, 0.0);

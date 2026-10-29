@@ -95,13 +95,21 @@ fn auto_attacks(
         let range = m.kind.range() * stats.range;
         let from = mount_pos(&mounts, m.kind, ctf.translation + Vec3::Y * 3.0);
         let from2 = p2(from);
-        // A boss in range gets priority from arrows and shells.
+        // A boss in range gets priority from arrows and shells. Bosses are
+        // huge, so aim at the near side of their body, not their center.
         let boss = bosses
             .iter()
-            .map(|(t, e)| (p2(t.translation), e))
-            .filter(|(p, e)| p.distance(from2) < range + e.radius)
-            .min_by(|a, b| a.0.distance(from2).total_cmp(&b.0.distance(from2)))
-            .map(|(p, e)| (p, e.vel));
+            .map(|(t, e)| {
+                let p = p2(t.translation);
+                let axis = e.axis(t);
+                let q = crate::grid::closest_on_segment(p - axis, p + axis, from2);
+                let d = q.distance(from2);
+                let aim = q + (from2 - q).normalize_or(Vec2::X) * (e.radius * 0.6).min(d);
+                (aim, d - e.radius, e)
+            })
+            .filter(|(_, gap, _)| *gap < range)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(p, _, e)| (p, e.vel));
         match m.kind {
             ModuleKind::ArrowLoft => {
                 let count = 2 + m.level as usize;

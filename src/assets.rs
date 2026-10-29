@@ -2,8 +2,10 @@
 
 use crate::GameState;
 use crate::art::{self, Variant};
+use crate::boss::Rig;
 use crate::enemy::EnemyKind;
 use crate::items::ModuleKind;
+use crate::boss_models;
 use crate::models::{self, Mat, Model};
 use crate::texgen::{self, Surface};
 use bevy::math::Affine2;
@@ -38,7 +40,8 @@ pub struct GameAssets {
     pub modules: HashMap<ModuleKind, ModelHandle>,
     /// Troops: one vertex-colored mesh each.
     pub enemies: HashMap<EnemyKind, Handle<Mesh>>,
-    pub bosses: HashMap<EnemyKind, ModelHandle>,
+    /// Bosses: rigs of separately moving parts.
+    pub bosses: HashMap<EnemyKind, Rig>,
     pub villages: Vec<ModelHandle>,
     pub sheep: Handle<Mesh>,
     pub coin: ModelHandle,
@@ -101,6 +104,10 @@ pub struct Mats {
     pub blood: Handle<StandardMaterial>,
     pub water: Handle<StandardMaterial>,
     pub telegraph: Handle<StandardMaterial>,
+    /// Faint red fill under telegraph rings and lanes.
+    pub warn: Handle<StandardMaterial>,
+    /// Burning ground.
+    pub burning: Handle<StandardMaterial>,
     pub cannonball: Handle<StandardMaterial>,
     pub stone: Handle<StandardMaterial>,
     pub grass: Handle<StandardMaterial>,
@@ -184,6 +191,12 @@ pub fn create_assets(
                     reflectance: 0.25,
                     ..default()
                 },
+                Mat::Ember => StandardMaterial {
+                    base_color: Color::srgb(1.0, 0.55, 0.22),
+                    emissive: LinearRgba::rgb(9.0, 3.0, 0.6),
+                    perceptual_roughness: 0.9,
+                    ..default()
+                },
                 Mat::Bronze => StandardMaterial {
                     base_color: Color::srgb(0.62, 0.45, 0.25),
                     metallic: 1.0,
@@ -217,14 +230,15 @@ pub fn create_assets(
     enemies.insert(EnemyKind::Knight, meshes.add(models::knight()));
     enemies.insert(EnemyKind::Cart, meshes.add(models::cart()));
     let mut bosses = HashMap::default();
-    for (kind, model) in [
-        (EnemyKind::SiegeTower, models::siege_tower()),
-        (EnemyKind::WarWagon, models::war_wagon()),
-        (EnemyKind::Juggernaut, models::juggernaut()),
-        (EnemyKind::Trebuchet, models::trebuchet()),
-        (EnemyKind::Warlord, models::warlord()),
+    for (kind, rig) in [
+        (EnemyKind::SiegeTower, boss_models::siege_tower()),
+        (EnemyKind::WarWagon, boss_models::war_wagon()),
+        (EnemyKind::Juggernaut, boss_models::juggernaut()),
+        (EnemyKind::Trebuchet, boss_models::trebuchet()),
+        (EnemyKind::Warlord, boss_models::warlord()),
     ] {
-        bosses.insert(kind, upload(&mut meshes, &mats, model));
+        let models = rig.models.into_iter().map(|m| upload(&mut meshes, &mats, m)).collect();
+        bosses.insert(kind, Rig { models, parts: rig.parts });
     }
 
     let glow = |c: Color, e: LinearRgba| StandardMaterial { base_color: c, emissive: e, unlit: true, ..default() };
@@ -265,6 +279,19 @@ pub fn create_assets(
             base_color: Color::srgba(1.0, 0.22, 0.12, 0.45),
             unlit: true,
             alpha_mode: AlphaMode::Blend,
+            ..default()
+        }),
+        warn: materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 0.18, 0.10, 0.16),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        }),
+        burning: materials.add(StandardMaterial {
+            base_color: Color::srgba(0.95, 0.38, 0.08, 0.5),
+            emissive: LinearRgba::rgb(2.6, 0.75, 0.12),
+            alpha_mode: AlphaMode::Blend,
+            perceptual_roughness: 1.0,
             ..default()
         }),
         cannonball: materials.add(StandardMaterial {

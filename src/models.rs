@@ -35,10 +35,13 @@ pub enum Mat {
     Bark,
     /// Polished cast bronze (cannons, spyglass).
     Bronze,
+    /// Glowing fire: furnaces, braziers, lit windows.
+    Ember,
 }
 
 impl Mat {
-    pub const ALL: [Mat; 14] = [
+    pub const ALL: [Mat; 15] = [
+        Mat::Ember,
         Mat::Foliage,
         Mat::Bark,
         Mat::Bronze,
@@ -103,7 +106,7 @@ pub struct Model {
     parts: HashMap<Mat, Part>,
 }
 
-const W: Color = Color::WHITE;
+pub(crate) const W: Color = Color::WHITE;
 
 impl Model {
     pub fn new() -> Self {
@@ -399,7 +402,7 @@ fn hash3(x: i32, y: i32, z: i32, seed: u32) -> f32 {
     (h & 0xffff) as f32 / 65535.0
 }
 
-fn noise3(p: Vec3, seed: u32) -> f32 {
+pub(crate) fn noise3(p: Vec3, seed: u32) -> f32 {
     let i = p.floor();
     let f = p - i;
     let s = f * f * (Vec3::splat(3.0) - 2.0 * f);
@@ -420,31 +423,31 @@ fn noise3(p: Vec3, seed: u32) -> f32 {
 // Palette
 // ---------------------------------------------------------------------------
 
-fn stone_tint() -> Color {
+pub(crate) fn stone_tint() -> Color {
     rgb(1.0, 0.97, 0.92)
 }
-fn slate_tint() -> Color {
+pub(crate) fn slate_tint() -> Color {
     rgb(0.9, 0.95, 1.0)
 }
-fn skin() -> Color {
+pub(crate) fn skin() -> Color {
     rgb(0.72, 0.53, 0.42)
 }
-fn mail() -> Color {
+pub(crate) fn mail() -> Color {
     rgb(0.40, 0.41, 0.43)
 }
-fn steel() -> Color {
+pub(crate) fn steel() -> Color {
     rgb(0.55, 0.56, 0.58)
 }
-fn leather() -> Color {
+pub(crate) fn leather() -> Color {
     rgb(0.30, 0.20, 0.13)
 }
-fn timber() -> Color {
+pub(crate) fn timber() -> Color {
     rgb(0.33, 0.23, 0.15)
 }
-fn crimson() -> Color {
+pub(crate) fn crimson() -> Color {
     rgb(0.45, 0.07, 0.07)
 }
-fn royal() -> Color {
+pub(crate) fn royal() -> Color {
     rgb(0.12, 0.20, 0.42)
 }
 
@@ -453,7 +456,7 @@ fn royal() -> Color {
 // ---------------------------------------------------------------------------
 
 /// Pointed (lancet) window set into a wall facing `out`.
-fn window(m: &mut Model, center: Vec3, out: Vec3, w: f32, h: f32) {
+pub(crate) fn window(m: &mut Model, center: Vec3, out: Vec3, w: f32, h: f32) {
     let rot = Quat::from_rotation_arc(Vec3::Z, out.normalize());
     let at = |x: f32, y: f32| center + rot * Vec3::new(x, y, 0.03);
     let hw = w / 2.0;
@@ -467,7 +470,7 @@ fn window(m: &mut Model, center: Vec3, out: Vec3, w: f32, h: f32) {
 }
 
 /// Merlons along a wall top from `a` to `b`.
-fn battlements(m: &mut Model, a: Vec3, b: Vec3, thick: f32) {
+pub(crate) fn battlements(m: &mut Model, a: Vec3, b: Vec3, thick: f32) {
     let d = b - a;
     let len = d.length();
     let dir = d / len;
@@ -481,7 +484,7 @@ fn battlements(m: &mut Model, a: Vec3, b: Vec3, thick: f32) {
 }
 
 /// Curtain wall segment with battlements, standing on `y0`.
-fn wall(m: &mut Model, a: Vec2, b: Vec2, y0: f32, h: f32, thick: f32) {
+pub(crate) fn wall(m: &mut Model, a: Vec2, b: Vec2, y0: f32, h: f32, thick: f32) {
     let mid = (a + b) / 2.0;
     let d = b - a;
     let len = d.length();
@@ -497,7 +500,7 @@ fn wall(m: &mut Model, a: Vec2, b: Vec2, y0: f32, h: f32, thick: f32) {
 }
 
 /// Round tower with a corbelled parapet and a steep slate spire.
-fn round_tower(m: &mut Model, base: Vec3, r: f32, h: f32, spire: f32, flag: Option<Color>) {
+pub(crate) fn round_tower(m: &mut Model, base: Vec3, r: f32, h: f32, spire: f32, flag: Option<Color>) {
     m.frustum(Mat::Stone, base, r * 1.12, r * 1.06, 0.4, 16, stone_tint(), true);
     m.frustum(Mat::Stone, base + Vec3::Y * 0.4, r * 1.04, r, h - 0.4, 18, stone_tint(), true);
     // Corbel ring and parapet.
@@ -529,7 +532,7 @@ fn round_tower(m: &mut Model, base: Vec3, r: f32, h: f32, spire: f32, flag: Opti
 }
 
 /// Square tower with string courses, corner pinnacles and an octagonal spire.
-fn square_tower(m: &mut Model, base: Vec3, w: f32, h: f32, spire: f32, clock: bool, flag: Option<Color>) {
+pub(crate) fn square_tower(m: &mut Model, base: Vec3, w: f32, h: f32, spire: f32, clock: bool, flag: Option<Color>) {
     m.boxy(Mat::Stone, Vec3::new(w + 0.2, 0.5, w + 0.2), base + Vec3::Y * 0.25, stone_tint());
     m.boxy(Mat::Stone, Vec3::new(w, h, w), base + Vec3::Y * (h / 2.0), stone_tint());
     let mut y = 2.6;
@@ -564,7 +567,7 @@ fn square_tower(m: &mut Model, base: Vec3, w: f32, h: f32, spire: f32, clock: bo
 }
 
 /// Great hall: tall walls, buttresses, lancet windows and a steep slate roof.
-fn hall(m: &mut Model, center: Vec3, len: f32, wid: f32, wall_h: f32, roof_h: f32) {
+pub(crate) fn hall(m: &mut Model, center: Vec3, len: f32, wid: f32, wall_h: f32, roof_h: f32) {
     m.boxy(Mat::Stone, Vec3::new(len, wall_h, wid), center + Vec3::Y * (wall_h / 2.0), stone_tint());
     m.roof(center + Vec3::Y * wall_h, Quat::IDENTITY, len, wid, roof_h, 0.3, slate_tint(), Mat::Stone, stone_tint(), Mat::Slate);
     let n = (len / 1.3).floor().max(2.0) as i32;
@@ -593,7 +596,7 @@ fn hall(m: &mut Model, center: Vec3, len: f32, wid: f32, wall_h: f32, roof_h: f3
     m.frustum_rot(Mat::Stone, gable - Vec3::X * 0.02, Quat::from_rotation_z(-FRAC_PI_2), 0.68, 0.68, 0.03, 12, stone_tint(), true, true);
 }
 
-fn flag_at(m: &mut Model, top: Vec3, c: Color) {
+pub(crate) fn flag_at(m: &mut Model, top: Vec3, c: Color) {
     m.frustum(Mat::Iron, top - Vec3::Y * 0.4, 0.03, 0.03, 1.6, 6, W, true);
     let p = top + Vec3::Y * 0.8;
     let pts = [p, p + Vec3::new(1.1, -0.1, 0.0), p + Vec3::new(1.0, -0.55, 0.05), p + Vec3::new(0.0, -0.6, 0.0)];
@@ -601,7 +604,7 @@ fn flag_at(m: &mut Model, top: Vec3, c: Color) {
 }
 
 /// Solid wooden wheel with an iron tire, axle along Z.
-fn wheel(m: &mut Model, center: Vec3, r: f32, w: f32) {
+pub(crate) fn wheel(m: &mut Model, center: Vec3, r: f32, w: f32) {
     let rot = Quat::from_rotation_x(FRAC_PI_2);
     let base = center - Vec3::Z * (w / 2.0);
     m.frustum_rot(Mat::Wood, base, rot, r * 0.93, r * 0.93, w, 16, W, true, true);
@@ -749,7 +752,7 @@ pub fn castle(stage: usize, variant: Variant) -> Model {
 }
 
 /// Spoked wooden wheel with an iron tire; axle along Z.
-fn spoked_wheel(m: &mut Model, center: Vec3, r: f32, w: f32) {
+pub(crate) fn spoked_wheel(m: &mut Model, center: Vec3, r: f32, w: f32) {
     let n = 14;
     for i in 0..n {
         let a = i as f32 / n as f32 * TAU;
@@ -768,7 +771,7 @@ fn spoked_wheel(m: &mut Model, center: Vec3, r: f32, w: f32) {
 }
 
 /// An archer drawing a longbow, facing +X.
-fn archer_figure(m: &mut Model, tunic: Color, hood: Color) {
+pub(crate) fn archer_figure(m: &mut Model, tunic: Color, hood: Color) {
     let p = Mat::Paint;
     for z in [-0.11f32, 0.11] {
         m.frustum(p, Vec3::new(0.0, 0.0, z), 0.09, 0.08, 0.6, 7, rgb(0.20, 0.17, 0.14), true);
@@ -1062,7 +1065,7 @@ pub fn artifact(kind: crate::items::ArtifactKind) -> Model {
 // Troops (single vertex-colored mesh each, so thousands stay cheap)
 // ---------------------------------------------------------------------------
 
-fn soldier(m: &mut Model, tabard: Color, helmet: Color) {
+pub(crate) fn soldier(m: &mut Model, tabard: Color, helmet: Color) {
     let p = Mat::Paint;
     for z in [-0.11f32, 0.11] {
         m.frustum(p, Vec3::new(0.0, 0.0, z), 0.09, 0.08, 0.6, 7, rgb(0.20, 0.17, 0.14), true);
@@ -1172,135 +1175,6 @@ pub fn coin() -> Model {
     let mut m = Model::new();
     m.frustum_rot(Mat::Gold, Vec3::new(0.0, 0.0, -0.06), Quat::from_rotation_x(FRAC_PI_2), 0.38, 0.38, 0.12, 16, W, true, true);
     m.frustum_rot(Mat::Gold, Vec3::new(0.0, 0.0, 0.06), Quat::from_rotation_x(-FRAC_PI_2), 0.38, 0.38, 0.01, 16, W, true, true);
-    m
-}
-
-// ---------------------------------------------------------------------------
-// Bosses (textured, several materials each)
-// ---------------------------------------------------------------------------
-
-pub fn siege_tower() -> Model {
-    let mut m = Model::new();
-    chassis(&mut m, 5.4, 4.4, 1.35, 0.6, &[-1.9, 1.9], 0.85);
-    m.frustum(Mat::Wood, Vec3::new(0.0, 1.35, 0.0), 2.4, 1.8, 8.6, 4, W, false);
-    for i in 0..5 {
-        let y = 2.6 + i as f32 * 1.7;
-        let r = 2.35 - i as f32 * 0.13;
-        m.frustum(Mat::Iron, Vec3::new(0.0, y, 0.0), r, r - 0.02, 0.14, 4, W, false);
-    }
-    m.cube(Mat::Paint, Vec3::new(0.2, 6.0, 3.0), Vec3::new(1.95, 6.0, 0.0), Quat::from_rotation_z(-0.12), rgb(0.42, 0.30, 0.20));
-    m.boxy(Mat::Wood, Vec3::new(3.4, 0.3, 3.4), Vec3::new(0.0, 10.05, 0.0), W);
-    for (x, z) in [(1.5, 1.5), (-1.5, 1.5), (1.5, -1.5), (-1.5, -1.5)] {
-        m.boxy(Mat::Wood, Vec3::new(0.24, 1.1, 0.24), Vec3::new(x, 10.7, z), timber());
-    }
-    for (x, z) in [(0.6, 0.6), (-0.6, -0.5), (0.5, -0.8), (-0.4, 0.7)] {
-        let mut s = Model::new();
-        soldier(&mut s, crimson(), steel());
-        let mesh_parts = s.parts.remove(&Mat::Paint).unwrap_or_default();
-        let part = m.part(Mat::Paint);
-        let off = part.pos.len() as u32;
-        for i in 0..mesh_parts.pos.len() {
-            let p = Vec3::from_array(mesh_parts.pos[i]) + Vec3::new(x, 10.2, z);
-            part.pos.push(p.to_array());
-            part.nrm.push(mesh_parts.nrm[i]);
-            part.uv.push(mesh_parts.uv[i]);
-            part.col.push(mesh_parts.col[i]);
-        }
-        part.idx.extend(mesh_parts.idx.iter().map(|i| i + off));
-    }
-    flag_at(&mut m, Vec3::new(-1.5, 11.2, 1.5), crimson());
-    m
-}
-
-pub fn war_wagon() -> Model {
-    let mut m = Model::new();
-    chassis(&mut m, 5.4, 3.2, 1.3, 0.5, &[-1.8, 0.0, 1.8], 0.9);
-    m.boxy(Mat::Iron, Vec3::new(5.0, 1.6, 3.2), Vec3::new(0.0, 2.1, 0.0), W);
-    for i in 0..6 {
-        let x = -2.2 + i as f32 * 0.88;
-        for s in [-1.0f32, 1.0] {
-            m.blob(Mat::Iron, Vec3::new(x, 2.4, s * 1.62), 0.07, Vec3::ONE, W, 0.0, 1, 1);
-        }
-    }
-    m.roof(Vec3::new(0.0, 2.9, 0.0), Quat::IDENTITY, 5.0, 3.2, 0.6, 0.05, W, Mat::Iron, W, Mat::Iron);
-    m.frustum(Mat::Iron, Vec3::new(0.3, 3.3, 0.0), 0.9, 0.8, 0.6, 12, W, true);
-    m.frustum_rot(Mat::Iron, Vec3::new(0.8, 3.65, 0.0), Quat::from_rotation_z(-FRAC_PI_2), 0.36, 0.3, 2.6, 12, rgb(0.6, 0.6, 0.6), true, true);
-    flag_at(&mut m, Vec3::new(-2.2, 3.0, 1.2), crimson());
-    m
-}
-
-pub fn juggernaut() -> Model {
-    let mut m = Model::new();
-    chassis(&mut m, 9.0, 5.4, 1.6, 0.8, &[-3.2, -1.0, 1.2, 3.4], 1.15);
-    m.boxy(Mat::Iron, Vec3::new(8.6, 2.4, 5.2), Vec3::new(0.0, 2.8, 0.0), W);
-    m.roof(Vec3::new(-0.6, 4.0, 0.0), Quat::IDENTITY, 7.0, 4.8, 1.6, 0.1, W, Mat::Iron, W, Mat::Iron);
-    m.frustum_rot(Mat::Iron, Vec3::new(4.3, 2.4, 0.0), Quat::from_rotation_z(-FRAC_PI_2), 1.5, 0.0, 3.4, 10, rgb(0.5, 0.5, 0.5), true, false);
-    for z in [-1.8f32, 1.8] {
-        m.frustum_rot(Mat::Iron, Vec3::new(4.3, 1.8, z), Quat::from_rotation_z(-FRAC_PI_2), 0.5, 0.0, 1.8, 8, W, false, false);
-        m.blob(Mat::Paint, Vec3::new(4.32, 3.4, z * 0.5), 0.22, Vec3::new(0.4, 1.0, 1.0), rgb(4.0, 1.2, 0.2), 0.0, 1, 1);
-    }
-    for i in 0..7 {
-        m.frustum(Mat::Iron, Vec3::new(-3.0 + i as f32 * 1.0, 5.4, 0.0), 0.35, 0.0, 1.1, 6, W, false);
-    }
-    m.frustum(Mat::Iron, Vec3::new(-3.6, 4.0, 1.4), 0.45, 0.5, 2.4, 10, rgb(0.4, 0.4, 0.4), true);
-    m
-}
-
-pub fn trebuchet() -> Model {
-    let mut m = Model::new();
-    chassis(&mut m, 8.0, 6.0, 1.6, 0.8, &[-2.8, 0.0, 2.8], 1.0);
-    for z in [-1.2f32, 1.2] {
-        m.cube(Mat::Wood, Vec3::new(0.4, 6.0, 0.4), Vec3::new(-0.7, 4.5, z), Quat::from_rotation_z(0.22), W);
-        m.cube(Mat::Wood, Vec3::new(0.4, 6.0, 0.4), Vec3::new(0.7, 4.5, z), Quat::from_rotation_z(-0.22), W);
-    }
-    m.frustum_rot(Mat::Iron, Vec3::new(0.0, 7.3, -1.5), Quat::from_rotation_x(FRAC_PI_2), 0.18, 0.18, 3.0, 8, W, true, false);
-    m.cube(Mat::Wood, Vec3::new(9.5, 0.45, 0.45), Vec3::new(-0.6, 7.6, 0.0), Quat::from_rotation_z(0.45), W);
-    m.boxy(Mat::Stone, Vec3::new(1.9, 1.9, 1.9), Vec3::new(3.6, 6.4, 0.0), rgb(0.6, 0.58, 0.55));
-    m.blob(Mat::Stone, Vec3::new(-4.6, 5.6, 0.0), 0.8, Vec3::ONE, rgb(0.7, 0.68, 0.64), 0.15, 31, 2);
-    m.boxy(Mat::Stone, Vec3::new(2.4, 3.2, 2.4), Vec3::new(-2.6, 3.2, -1.9), sh(stone_tint(), 0.8));
-    m.frustum(Mat::Slate, Vec3::new(-2.6, 4.8, -1.9), 1.9, 0.0, 2.0, 4, slate_tint(), false);
-    for i in 0..5 {
-        m.blob(Mat::Stone, Vec3::new(-3.0 + i as f32 * 0.7, 1.95, 2.2), 0.35, Vec3::ONE, rgb(0.7, 0.68, 0.64), 0.2, 40 + i, 1);
-    }
-    m
-}
-
-pub fn warlord() -> Model {
-    let mut m = Model::new();
-    let dark = rgb(0.42, 0.40, 0.42);
-    chassis(&mut m, 17.0, 12.0, 1.9, 1.0, &[-6.6, -3.3, 0.0, 3.3, 6.6], 1.5);
-    // Dark walls.
-    m.boxy(Mat::Stone, Vec3::new(15.0, 4.4, 10.4), Vec3::new(0.0, 4.1, 0.0), dark);
-    battlements(&mut m, Vec3::new(-7.4, 6.3, 5.1), Vec3::new(7.4, 6.3, 5.1), 0.3);
-    battlements(&mut m, Vec3::new(-7.4, 6.3, -5.1), Vec3::new(7.4, 6.3, -5.1), 0.3);
-    for (x, z) in [(6.6, 4.4), (6.6, -4.4), (-6.6, 4.4), (-6.6, -4.4)] {
-        m.frustum(Mat::Stone, Vec3::new(x, 1.9, z), 2.1, 1.9, 8.8, 16, dark, true);
-        m.frustum(Mat::Stone, Vec3::new(x, 10.5, z), 1.9, 2.2, 0.4, 16, sh(dark, 0.9), true);
-        m.frustum(Mat::Slate, Vec3::new(x, 10.9, z), 2.5, 0.0, 5.5, 8, rgb(0.55, 0.4, 0.42), false);
-    }
-    // Black keep and spire.
-    m.boxy(Mat::Stone, Vec3::new(6.4, 9.0, 6.0), Vec3::new(-1.0, 6.4, 0.0), sh(dark, 0.85));
-    for s in [-1.0f32, 1.0] {
-        for x in [-2.6, -1.0, 0.6] {
-            window(&mut m, Vec3::new(x, 8.0, s * 3.0), Vec3::Z * s, 0.5, 1.6);
-        }
-    }
-    m.roof(Vec3::new(-1.0, 10.9, 0.0), Quat::IDENTITY, 6.4, 6.0, 4.2, 0.3, rgb(0.5, 0.36, 0.38), Mat::Stone, dark, Mat::Slate);
-    m.frustum(Mat::Stone, Vec3::new(2.6, 10.9, 0.0), 1.5, 1.4, 4.0, 14, dark, true);
-    m.frustum(Mat::Slate, Vec3::new(2.6, 14.9, 0.0), 2.0, 0.0, 6.5, 8, rgb(0.5, 0.36, 0.38), false);
-    flag_at(&mut m, Vec3::new(2.6, 21.4, 0.0), crimson());
-    // Iron gate, rams and cannons.
-    m.boxy(Mat::Iron, Vec3::new(0.2, 3.4, 3.4), Vec3::new(7.6, 3.6, 0.0), W);
-    for z in [-3.6f32, -1.2, 1.2, 3.6] {
-        m.frustum_rot(Mat::Iron, Vec3::new(7.6, 2.4, z), Quat::from_rotation_z(-FRAC_PI_2), 0.6, 0.0, 2.6, 8, W, false, false);
-    }
-    for z in [-3.0f32, 3.0] {
-        m.frustum_rot(Mat::Iron, Vec3::new(4.0, 6.8, z), Quat::from_rotation_z(-FRAC_PI_2), 0.55, 0.45, 3.0, 12, W, true, true);
-    }
-    for s in [-1.0f32, 1.0] {
-        let pts = [Vec3::new(-6.0, 6.0, s * 5.25), Vec3::new(-3.0, 6.0, s * 5.25), Vec3::new(-3.0, 2.6, s * 5.25), Vec3::new(-6.0, 2.6, s * 5.25)];
-        m.poly(Mat::Cloth, crimson(), &pts, &[Vec2::ZERO, Vec2::X, Vec2::ONE, Vec2::Y], Vec3::Z * s);
-    }
     m
 }
 
