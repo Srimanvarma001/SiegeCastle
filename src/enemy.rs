@@ -507,7 +507,6 @@ fn charge_ai(
                         Transform::from_translation(w3(mid, 0.1))
                             .with_rotation(yaw(dir.to_angle()))
                             .with_scale(Vec3::new(len, 0.05, en.radius * 1.2)),
-                        bevy::light::NotShadowCaster,
                     ))
                     .id();
                 boss.telegraph = Some(t);
@@ -558,7 +557,6 @@ fn spawn_pointer(mut commands: Commands, assets: Res<GameAssets>) {
         MeshMaterial3d(assets.m.telegraph.clone()),
         Transform::default(),
         Visibility::Hidden,
-        bevy::light::NotShadowCaster,
     ));
 }
 

@@ -9,15 +9,23 @@ use crate::items::{Loadout, Stats};
 use crate::player::Castle;
 use crate::progression::Progress;
 use crate::{GameEntity, GameRng, GameState, MAP_HALF, RunStats, Shake, Sim};
+use crate::graphics::{MainCamera, SceneImage};
+use bevy::camera::RenderTarget;
 use bevy::core_pipeline::tonemapping::Tonemapping;
-use bevy::light::{CascadeShadowConfigBuilder, NotShadowCaster};
+use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::pbr::{DistanceFog, FogFalloff};
-use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use rand::Rng;
 
 const VILLAGES: usize = 42;
 const SHEEP: usize = 110;
+
+/// Camera height above the castle at stage 1, before the player's own zoom.
+const CAMERA_HEIGHT: f32 = 58.0;
+/// Extra height per castle stage, so the bigger castles still fit.
+const STAGE_ZOOM: [f32; 3] = [1.0, 1.2, 1.4];
+/// How far the mouse wheel (or - and =) can zoom in and out.
+const PLAYER_ZOOM: (f32, f32) = (0.6, 1.5);
 
 pub struct WorldPlugin;
 
@@ -111,12 +119,15 @@ fn fbm(p: Vec2, seed: u32) -> f32 {
 
 // --- Setup ------------------------------------------------------------------
 
-fn spawn_camera(mut commands: Commands) {
-    let fast = std::env::var("SIEGE_LOWRES").is_ok();
-    let mut cam = commands.spawn((
+/// Bloom and anti-aliasing are added by `graphics::apply` from the chosen
+/// quality preset. It draws into the scene image (see `graphics.rs`), and
+/// `follow_camera` moves it and keeps the haze in place.
+fn spawn_camera(mut commands: Commands, scene: Res<SceneImage>) {
+    commands.spawn((
+        MainCamera,
         Camera3d::default(),
+        RenderTarget::from(scene.0.clone()),
         bevy::camera::Hdr,
-        Bloom { intensity: 0.12, ..Bloom::NATURAL },
         Tonemapping::AgX,
         Projection::Perspective(PerspectiveProjection { fov: 32f32.to_radians(), ..default() }),
         Transform::from_xyz(0.0, 46.0, 20.0).looking_at(Vec3::ZERO, Vec3::Y),
@@ -127,20 +138,12 @@ fn spawn_camera(mut commands: Commands) {
             directional_light_exponent: 20.0,
             falloff: FogFalloff::Linear { start: 70.0, end: 260.0 },
         },
-        bevy::light::ShadowFilteringMethod::Gaussian,
+        Msaa::Off,
     ));
-    if !fast {
-        // Soft contact shadows in corners and crevices, and smooth edges.
-        cam.insert((
-            Msaa::Off,
-            bevy::pbr::ScreenSpaceAmbientOcclusion::default(),
-            bevy::anti_alias::smaa::Smaa::default(),
-        ));
-    }
 }
 
 fn spawn_light(mut commands: Commands) {
-    // Cool sky light from above, warm late-afternoon sun for long shadows.
+    // Cool sky light from above, warm late-afternoon sun. Nothing casts shadows.
     commands.insert_resource(GlobalAmbientLight {
         color: Color::srgb(0.70, 0.78, 0.92),
         brightness: 380.0,
@@ -150,17 +153,9 @@ fn spawn_light(mut commands: Commands) {
         DirectionalLight {
             color: Color::srgb(1.0, 0.90, 0.76),
             illuminance: 6_000.0,
-            shadow_maps_enabled: std::env::var("SIEGE_LOWRES").is_err(),
             ..default()
         },
         Transform::from_xyz(-70.0, 62.0, 30.0).looking_at(Vec3::ZERO, Vec3::Y),
-        CascadeShadowConfigBuilder {
-            num_cascades: 3,
-            first_cascade_far_bound: 45.0,
-            maximum_distance: 180.0,
-            ..default()
-        }
-        .build(),
     ));
 }
 
@@ -202,7 +197,8 @@ fn spawn_world(
     // Ground with soft patches; darker grass near water.
     let w = &water;
     // The grass texture is tinted per vertex: lush, dry and shaded patches.
-    let ground = art::ground_mesh(MAP_HALF + 40.0, 170, |p| {
+    // Reaches well past the pine wall so a zoomed-out camera never sees its edge.
+    let ground = art::ground_mesh(MAP_HALF + 90.0, 200, |p| {
         let n = fbm(p, seed);
         let dry = fbm(p * 0.7 + Vec2::splat(91.0), seed + 3);
         let base = art::rgb(1.0, 1.0, 1.0);
@@ -220,7 +216,7 @@ fn spawn_world(
         }
         c
     });
-    commands.spawn((GameEntity, Mesh3d(meshes.add(ground)), MeshMaterial3d(assets.m.grass.clone()), Transform::IDENTITY, NotShadowCaster));
+    commands.spawn((GameEntity, Mesh3d(meshes.add(ground)), MeshMaterial3d(assets.m.grass.clone()), Transform::IDENTITY));
 
     // Dirt roads (soft edges blend into the grass).
     for (i, r) in roads.iter().enumerate() {
@@ -229,7 +225,6 @@ fn spawn_world(
             Mesh3d(meshes.add(art::road_mesh(r, 3.6, 0.02 + i as f32 * 0.004))),
             MeshMaterial3d(assets.m.road.clone()),
             Transform::IDENTITY,
-            NotShadowCaster,
         ));
     }
 
@@ -241,12 +236,11 @@ fn spawn_world(
             Mesh3d(assets.disc.clone()),
             MeshMaterial3d(assets.m.water.clone()),
             Transform::from_translation(w3(c, 0.03)).with_scale(Vec3::new(r * 2.0 * stretch, 0.04, r * 2.0 / stretch)),
-            NotShadowCaster,
         ));
     }
     if water.river.len() > 2 {
         let river = art::ribbon_mesh(&water.river, 2.6, 0.04, art::rgb(0.16, 0.27, 0.27));
-        commands.spawn((GameEntity, Mesh3d(meshes.add(river)), MeshMaterial3d(assets.m.water.clone()), Transform::IDENTITY, NotShadowCaster));
+        commands.spawn((GameEntity, Mesh3d(meshes.add(river)), MeshMaterial3d(assets.m.water.clone()), Transform::IDENTITY));
     }
 
     // Trees, rocks and grass, merged into a few big meshes per map chunk.
@@ -334,7 +328,7 @@ fn spawn_world(
     for (k, model) in grass.into_iter().enumerate() {
         if has_grass[k] {
             for (mat, mesh) in model.build() {
-                commands.spawn((GameEntity, Mesh3d(meshes.add(mesh)), MeshMaterial3d(assets.mat(mat)), Transform::IDENTITY, NotShadowCaster));
+                commands.spawn((GameEntity, Mesh3d(meshes.add(mesh)), MeshMaterial3d(assets.mat(mat)), Transform::IDENTITY));
             }
         }
     }
@@ -516,29 +510,62 @@ fn absorb(
     }
 }
 
+/// Player zoom: the target set by the mouse wheel and the smoothed value.
+#[derive(Default)]
+struct PlayerZoom {
+    target: f32,
+    current: f32,
+}
+
 fn follow_camera(
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     shake: Res<Shake>,
     loadout: Res<Loadout>,
+    scroll: Res<AccumulatedMouseScroll>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut rng: ResMut<GameRng>,
-    castle: Query<(&Transform, &Castle), Without<Camera3d>>,
-    mut cam: Query<&mut Transform, With<Camera3d>>,
+    castle: Query<(&Transform, &Castle), Without<MainCamera>>,
+    mut cam: Query<(&mut Transform, &mut DistanceFog), With<MainCamera>>,
     mut zoom: Local<f32>,
+    mut player: Local<PlayerZoom>,
     mut focus: Local<Vec2>,
 ) {
-    let (Ok((ctf, c)), Ok(mut tf)) = (castle.single(), cam.single_mut()) else {
+    let (Ok((ctf, c)), Ok((mut tf, mut fog))) = (castle.single(), cam.single_mut()) else {
         return;
     };
+    // Real time, so zooming still works while paused or picking cards.
     let dt = time.delta_secs().min(0.1);
     if *zoom == 0.0 {
         *zoom = 1.0;
+        *player = PlayerZoom { target: 1.0, current: 1.0 };
         *focus = p2(ctf.translation);
     }
-    let want_zoom = [1.0, 1.3, 1.65][loadout.stage.min(2)];
+
+    // Wheel up zooms in. Touchpads scroll in pixels, mice in lines.
+    let lines = match scroll.unit {
+        MouseScrollUnit::Line => scroll.delta.y,
+        MouseScrollUnit::Pixel => scroll.delta.y / 40.0,
+    };
+    let mut steps = -lines;
+    if keys.pressed(KeyCode::Equal) || keys.pressed(KeyCode::NumpadAdd) {
+        steps -= 4.0 * dt;
+    }
+    if keys.pressed(KeyCode::Minus) || keys.pressed(KeyCode::NumpadSubtract) {
+        steps += 4.0 * dt;
+    }
+    if steps != 0.0 {
+        player.target = (player.target * 1.1f32.powf(steps)).clamp(PLAYER_ZOOM.0, PLAYER_ZOOM.1);
+    }
+    player.current += (player.target - player.current) * (1.0 - (-10.0 * dt).exp());
+
+    let want_zoom = STAGE_ZOOM[loadout.stage.min(2)];
     *zoom += (want_zoom - *zoom) * (1.0 - (-1.5 * dt).exp());
     let target = p2(ctf.translation) + c.vel * 0.3;
     *focus = focus.lerp(target, 1.0 - (-5.0 * dt).exp());
-    let h = 40.0 * *zoom;
+    let h = CAMERA_HEIGHT * *zoom * player.current;
+    // The haze was tuned for a camera 40 m up (starting at 70 m, full at 260 m).
+    // Scale it with the height so it stays at the same place on screen.
+    fog.falloff = FogFalloff::Linear { start: h * 1.75, end: h * 6.5 };
     let mut look = w3(*focus, 0.0);
     if shake.0 > 0.0 {
         let s = shake.0.min(3.0) * 0.5;

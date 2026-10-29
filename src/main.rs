@@ -7,6 +7,8 @@
 
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::prelude::*;
+use bevy::render::RenderPlugin;
+use bevy::render::settings::{Backends, Dx12Compiler, WgpuSettings};
 use bevy::window::{PresentMode, WindowResolution};
 use rand::SeedableRng;
 use rand::rngs::SmallRng;
@@ -17,6 +19,7 @@ mod combat;
 mod debug;
 mod director;
 mod enemy;
+mod graphics;
 mod grid;
 mod hud;
 mod icons;
@@ -102,17 +105,45 @@ fn main() {
     // Test option: a small window renders much faster without a GPU.
     let lowres = std::env::var("SIEGE_LOWRES").is_ok();
     let (w, h) = if lowres { (640, 360) } else { (1280, 720) };
+    // Test option: SIEGE_VSYNC=0 shows how fast frames could go without waiting for the screen.
+    let present_mode = if std::env::var("SIEGE_VSYNC").is_ok_and(|v| v == "0") {
+        PresentMode::AutoNoVsync
+    } else {
+        PresentMode::AutoVsync
+    };
+
+    // On Windows, use DirectX 12 unless WGPU_BACKEND says otherwise: some Intel
+    // laptop Vulkan drivers run out of GPU memory a few seconds into a run.
+    let mut wgpu = WgpuSettings::default();
+    if cfg!(windows) && std::env::var("WGPU_BACKEND").is_err() {
+        wgpu.backends = Some(Backends::DX12);
+    }
+    // DirectX 12 needs the DXC shader compiler (dxcompiler.dll + dxil.dll from
+    // the Windows SDK). Without it the old FXC compiler takes minutes to build
+    // the lighting shaders and the world stays invisible until it finishes.
+    // Bevy only looks in the working directory, so also look next to the exe.
+    if std::env::var("WGPU_DX12_COMPILER").is_err()
+        && std::fs::metadata("dxcompiler.dll").is_err()
+        && let Some(dll) = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join("dxcompiler.dll")))
+        && dll.exists()
+    {
+        wgpu.dx12_shader_compiler = Dx12Compiler::DynamicDxc { dxc_path: dll.to_string_lossy().into_owned() };
+    }
 
     App::new()
-        .add_plugins(DefaultPlugins.set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "SiegeCastle".into(),
-                resolution: WindowResolution::new(w, h),
-                present_mode: PresentMode::AutoVsync,
-                ..default()
-            }),
-            ..default()
-        }))
+        .add_plugins(
+            DefaultPlugins
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "SiegeCastle".into(),
+                        resolution: WindowResolution::new(w, h),
+                        present_mode,
+                        ..default()
+                    }),
+                    ..default()
+                })
+                .set(RenderPlugin { render_creation: wgpu.into(), ..default() }),
+        )
         .add_plugins(FrameTimeDiagnosticsPlugin::default())
         .insert_resource(ClearColor(Color::srgb(0.20, 0.27, 0.18)))
         .insert_resource(GameRng(SmallRng::seed_from_u64(seed)))
@@ -130,6 +161,7 @@ fn main() {
             assets::AssetsPlugin,
             grid::GridPlugin,
             world::WorldPlugin,
+            graphics::GraphicsPlugin,
             player::PlayerPlugin,
             modules::ModulesPlugin,
             enemy::EnemyPlugin,

@@ -1,6 +1,6 @@
 # SiegeCastle
 
-A fast 3D medieval action roguelike made with **Rust + Bevy 0.20**, with a realistic look: a gothic castle of cut stone and slate spires, textured materials, soft shadows and atmospheric light.
+A fast 3D medieval action roguelike made with **Rust + Bevy 0.20**, with a realistic look: a gothic castle of cut stone and slate spires, textured materials and atmospheric light.
 
 Drive a castle on wheels across the countryside, plow through marching armies, and bolt new weapons onto your walls as you level up. Your castle grows through 3 stages. Beat 5 bosses, then survive the endless siege for as long as you can, as enemies grow exponentially in numbers and strength.
 
@@ -20,6 +20,10 @@ cargo run --release
 
 The first build takes a few minutes because it compiles Bevy. Later builds are quick.
 
+On Windows the game uses DirectX 12. Put `dxcompiler.dll` and `dxil.dll` in the project folder (or next to the `.exe`). They come with the Windows SDK, in `C:\Program Files (x86)\Windows Kits\10\bin\<version>\x64\`. Without them DirectX falls back to an old shader compiler, and the world can stay empty for minutes after launch. Set `WGPU_BACKEND=vulkan` to use Vulkan instead.
+
+If the first build crashes with an out-of-memory error, build with fewer parallel jobs: `cargo build --release -j 4`.
+
 On Linux, install these first (Ubuntu/Debian):
 
 ```bash
@@ -37,6 +41,8 @@ sudo apt install pkg-config libasound2-dev libudev-dev libwayland-dev libxkbcomm
 | T | Reroll the cards (2 per run) |
 | P / Esc | Pause |
 | R | Restart (after game over or while paused) |
+| Mouse wheel, or - and = | Zoom the camera out and in |
+| F9 | Switch graphics quality: Low, Medium, High |
 | F12 | Save a screenshot to `screenshots/` |
 
 ## How it plays
@@ -87,7 +93,7 @@ Everything is generated in code, with no art files to download:
 - **Countryside:** trees, firs and bushes built from leaf, needle and grass cards with a generated foliage texture; grass tufts with wildflowers; winding dirt roads with wheel ruts; farmsteads with timber-framed houses and wheat fields; ponds and a river.
 - **Weapons:** a bronze cannon on a spoked-wheel carriage, a torsion ballista, archers drawing longbows on a covered hoarding, a bronze mortar, and a covered battering ram.
 - **Cards:** velvet-and-gold level-up cards (crimson for weapons, sapphire for artifacts, emerald for castle growth) showing real 3D renders of each item, made in an off-screen studio at startup.
-- **Lighting:** a warm late-afternoon sun with soft cascaded shadows, cool sky light, screen-space ambient occlusion, distance haze, bloom on fire, and SMAA anti-aliasing.
+- **Lighting:** a warm late-afternoon sun, cool sky light, distance haze, bloom on fire, and SMAA anti-aliasing. There are no shadows, which keeps it fast on laptop graphics.
 - **UI:** Cinzel titles and EB Garamond text (both under the SIL Open Font License, see `assets/fonts/`).
 
 ## Why it is fast
@@ -97,6 +103,13 @@ Everything is generated in code, with no art files to download:
 - **Spatial grid:** enemies are sorted into small cells every frame, so targeting, collisions and explosions only check nearby cells.
 - **One mesh per unit:** each model is many colored shapes merged into a single mesh, and nearly everything shares one material, so thousands of units draw in a few batched calls. Static scenery is merged into a few big chunks.
 - **Caps:** at most 2200 troops and 900 coins at once. In endless mode enemies keep getting stronger past the cap, and extra XP goes straight to you.
+- **Graphics presets:** the game picks Low, Medium or High from your GPU (F9 switches). Medium and Low draw the 3D world at 80% or 67% of the window resolution and stretch it to fit, while the HUD stays at full sharpness. Integrated graphics start on Medium.
+
+| Preset | 3D resolution | Anti-aliasing | Bloom |
+|---|---|---|---|
+| High | 100% | SMAA high | on |
+| Medium | 80% | SMAA medium | on |
+| Low | 67% | SMAA low | off |
 
 ## Code layout
 
@@ -117,6 +130,7 @@ src/
   combat.rs       shots, explosions, mines, coins, effects
   progression.rs  XP, levels, card choices
   world.rs        terrain, forests, water, farms, sheep, camera, sun
+  graphics.rs     quality presets, render scale, the screen camera
   hud.rs          on-screen bars, slots, banners, end screens
   grid.rs         spatial grid for fast "who is near me?" checks
   debug.rs        autopilot and screenshot helpers for testing
@@ -141,6 +155,10 @@ SIEGE_AUTOPILOT=1 SIEGE_LOG=1 SIEGE_SHOTS=30,120 SIEGE_EXIT_AFTER=150 cargo run 
 - `SIEGE_ENDLESS=1`: start in endless mode
 - `SIEGE_GALLERY=1`: spawn all five bosses at once
 - `SIEGE_GOD=1`: castle cannot be destroyed
-- `SIEGE_LOWRES=1`: small window, no shadows or ambient occlusion, for quick tests on machines without a GPU
+- `SIEGE_LOWRES=1`: small window, for quick tests on machines without a GPU
+- `SIEGE_QUALITY=low|medium|high`: force a graphics preset
+- `SIEGE_GFX=scale=0.7,aa=low,bloom=0`: override single graphics settings
+- `SIEGE_PROFILE=1`: with `SIEGE_LOG`, also print main-thread, render-thread and GPU pass times
+- `SIEGE_VSYNC=0`: turn vsync off to see the uncapped frame rate
 
 Inspired by the "castle on wheels" idea from Wanderburg and by gothic castle architecture. All code, models, textures, names and text in this project are original. Fonts: Cinzel and EB Garamond, SIL Open Font License 1.1.

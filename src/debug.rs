@@ -12,8 +12,12 @@
 //! - `SIEGE_ENDLESS=1`       start directly in endless mode
 //! - `SIEGE_GOD=1`           castle cannot be destroyed
 //! - `SIEGE_GALLERY=1`       spawn all five bosses around the castle at once
-//! - `SIEGE_LOWRES=1`        small window, no shadows (fast tests without a GPU)
+//! - `SIEGE_LOWRES=1`        small window (fast tests without a GPU)
+//! - `SIEGE_PROFILE=1`       with `SIEGE_LOG`, also print main-thread and
+//!                           render-thread time per frame and the slowest GPU passes
+//! - `SIEGE_VSYNC=0`         turn vsync off (to measure the uncapped frame rate)
 //!
+//! Graphics presets have their own options, see `graphics.rs`.
 //! F12 always saves a screenshot.
 
 use crate::art::p2;
@@ -26,8 +30,13 @@ use crate::progression::{xp_needed, Progress};
 use crate::{GameRng, GameState, RunStats, Sim};
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
+use bevy::render::renderer::render_system;
 use bevy::render::view::screenshot::{save_to_disk, Screenshot};
+use bevy::render::{Render, RenderApp, RenderSystems};
 use rand::Rng;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Instant;
 
 pub struct DebugPlugin;
 
@@ -63,6 +72,47 @@ impl Plugin for DebugPlugin {
                         .after(crate::player::read_input)
                         .before(crate::player::drive),
                 );
+        }
+        if env("SIEGE_PROFILE").is_some() {
+            let render_cpu = RenderCpu::default();
+            app.add_plugins(bevy::render::diagnostic::RenderDiagnosticsPlugin)
+                .init_resource::<FrameCpu>()
+                .insert_resource(render_cpu.clone())
+                .add_systems(First, |mut f: ResMut<FrameCpu>| f.start = Some(Instant::now()))
+                .add_systems(Last, |mut f: ResMut<FrameCpu>| {
+                    if let Some(start) = f.start.take() {
+                        f.avg_ms = smooth(f.avg_ms, start.elapsed().as_secs_f32() * 1000.0);
+                    }
+                });
+            // Render thread: preparing the frame, then encoding, submitting and
+            // presenting it (which waits for the GPU and vsync when they lag).
+            if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+                render_app
+                    .insert_resource(render_cpu)
+                    .init_resource::<RenderMarks>()
+                    .add_systems(
+                        Render,
+                        (|mut m: ResMut<RenderMarks>| m.start = Some(Instant::now())).in_set(RenderSystems::ExtractCommands),
+                    )
+                    .add_systems(
+                        Render,
+                        (|mut m: ResMut<RenderMarks>| m.submit = Some(Instant::now()))
+                            .in_set(RenderSystems::Render)
+                            .before(render_system),
+                    )
+                    .add_systems(
+                        Render,
+                        (|mut m: ResMut<RenderMarks>, cpu: Res<RenderCpu>| {
+                            if let (Some(start), Some(submit)) = (m.start.take(), m.submit.take()) {
+                                let ms = |a: Instant, b: Instant| (b - a).as_secs_f32() * 1000.0;
+                                let now = Instant::now();
+                                cpu.store(&cpu.prepare, ms(start, submit));
+                                cpu.store(&cpu.submit, ms(submit, now));
+                            }
+                        })
+                        .in_set(RenderSystems::PostCleanup),
+                    );
+            }
         }
         app.insert_resource(cfg)
             .add_systems(Startup, apply_speed)
@@ -100,6 +150,43 @@ struct DebugConfig {
 
 #[derive(Resource)]
 struct ExitSoon(u32);
+
+/// Main-thread time per frame (game systems, without rendering), smoothed.
+#[derive(Resource, Default)]
+struct FrameCpu {
+    start: Option<Instant>,
+    avg_ms: f32,
+}
+
+/// Render-thread times, written in the render world and read in the main
+/// world. Milliseconds stored as f32 bits.
+#[derive(Resource, Clone, Default)]
+struct RenderCpu {
+    prepare: Arc<AtomicU32>,
+    submit: Arc<AtomicU32>,
+}
+
+impl RenderCpu {
+    fn store(&self, slot: &AtomicU32, ms: f32) {
+        let old = f32::from_bits(slot.load(Ordering::Relaxed));
+        slot.store(smooth(old, ms).to_bits(), Ordering::Relaxed);
+    }
+
+    fn load(slot: &AtomicU32) -> f32 {
+        f32::from_bits(slot.load(Ordering::Relaxed))
+    }
+}
+
+#[derive(Resource, Default)]
+struct RenderMarks {
+    start: Option<Instant>,
+    submit: Option<Instant>,
+}
+
+/// Exponential moving average over roughly the last 20 frames.
+fn smooth(avg: f32, sample: f32) -> f32 {
+    if avg == 0.0 { sample } else { avg * 0.95 + sample * 0.05 }
+}
 
 fn apply_speed(cfg: Res<DebugConfig>, mut time: ResMut<Time<Virtual>>) {
     if let Some(s) = cfg.speed {
@@ -220,6 +307,8 @@ fn debug_tick(
     enemies: Query<(), With<Enemy>>,
     bosses: Query<(&Transform, &Enemy), With<Boss>>,
     mut cfg: ResMut<DebugConfig>,
+    profile: Option<Res<FrameCpu>>,
+    render_cpu: Option<Res<RenderCpu>>,
 ) {
     let t = stats.time;
     if keys.just_pressed(KeyCode::F12) {
@@ -261,6 +350,23 @@ fn debug_tick(
                 loadout.artifacts.values().sum::<u32>(),
                 boss
             );
+            if let Some(profile) = &profile {
+                let mut passes: Vec<(String, f64)> = diagnostics
+                    .iter()
+                    .filter(|d| d.path().as_str().ends_with("/elapsed_gpu"))
+                    .filter_map(|d| Some((d.path().as_str().trim_end_matches("/elapsed_gpu").to_string(), d.smoothed()?)))
+                    .collect();
+                passes.sort_by(|a, b| b.1.total_cmp(&a.1));
+                let gpu: Vec<String> = passes.iter().take(6).map(|(name, ms)| format!("{name}={ms:.1}")).collect();
+                let (prepare, submit) = render_cpu
+                    .as_ref()
+                    .map_or((0.0, 0.0), |r| (RenderCpu::load(&r.prepare), RenderCpu::load(&r.submit)));
+                info!(
+                    "profile: main_thread={:.1}ms render_prepare={prepare:.1}ms render_submit={submit:.1}ms gpu_ms: {}",
+                    profile.avg_ms,
+                    gpu.join(" ")
+                );
+            }
         }
     }
     if let Some(limit) = cfg.exit_after

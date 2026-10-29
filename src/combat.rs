@@ -8,7 +8,6 @@ use crate::items::Stats;
 use crate::player::Castle;
 use crate::progression::Progress;
 use crate::{GameEntity, GameRng, RunStats, Shake, Sim};
-use bevy::light::NotShadowCaster;
 use bevy::prelude::*;
 use rand::Rng;
 
@@ -63,7 +62,6 @@ pub fn spawn_arc(commands: &mut Commands, assets: &GameAssets, from: Vec3, to: V
         Mesh3d(mesh),
         MeshMaterial3d(mat),
         Transform::from_translation(from).with_scale(scale),
-        NotShadowCaster,
     ));
 }
 
@@ -365,7 +363,6 @@ fn enemy_deaths(
                 Mesh3d(assets.coin.0[0].0.clone()),
                 MeshMaterial3d(assets.coin.0[0].1.clone()),
                 Transform::from_translation(w3(pos + off, 0.6)),
-                NotShadowCaster,
             ));
         }
     }
@@ -451,7 +448,6 @@ pub fn spawn_fx(commands: &mut Commands, assets: &GameAssets, kind: FxKind, pos:
             Mesh3d(mesh.clone()),
             MeshMaterial3d(mat.clone()),
             Transform::from_translation(pos).with_scale(scale),
-            NotShadowCaster,
         ))
         .id()
 }

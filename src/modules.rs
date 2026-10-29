@@ -8,7 +8,6 @@ use crate::grid::{Grid, GridEntry};
 use crate::items::{level_mult, Loadout, ModuleKind, Stats};
 use crate::player::{Castle, ModuleMount};
 use crate::{GameEntity, GameRng, GameState, Shake, Sim};
-use bevy::light::NotShadowCaster;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use rand::Rng;
@@ -207,7 +206,6 @@ fn fire_bolt(commands: &mut Commands, assets: &GameAssets, from: Vec2, dir: Vec2
         Mesh3d(assets.arrow.clone()),
         MeshMaterial3d(assets.m.vc.clone()),
         Transform::from_translation(w3(from, 2.0)).with_rotation(crate::art::yaw(dir.to_angle())).with_scale(Vec3::splat(2.4)),
-        NotShadowCaster,
     ));
 }
 
@@ -218,7 +216,6 @@ fn drop_mine(commands: &mut Commands, assets: &GameAssets, at: Vec2, dmg: f32, r
         Mesh3d(assets.mine.clone()),
         MeshMaterial3d(assets.m.vc.clone()),
         Transform::from_translation(w3(at, 0.0)),
-        NotShadowCaster,
     ));
 }
 
@@ -229,7 +226,6 @@ fn fire_cannonball(commands: &mut Commands, assets: &GameAssets, from: Vec2, vel
         Mesh3d(assets.ball.clone()),
         MeshMaterial3d(assets.m.cannonball.clone()),
         Transform::from_translation(w3(from, 1.6)).with_scale(Vec3::splat(0.75)),
-        NotShadowCaster,
     ));
     spawn_fx(commands, assets, FxKind::Smoke, w3(from, 1.8), 1.3, w3(vel * 0.05, 1.5));
     spawn_fx(commands, assets, FxKind::Spark, w3(from, 1.6), 0.9, Vec3::ZERO);

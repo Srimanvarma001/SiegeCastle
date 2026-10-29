@@ -69,7 +69,7 @@ fn setup(
     // Soft studio lighting.
     commands.spawn((
         StudioProp,
-        DirectionalLight { illuminance: 9_000.0, color: Color::srgb(1.0, 0.94, 0.85), shadow_maps_enabled: false, ..default() },
+        DirectionalLight { illuminance: 9_000.0, color: Color::srgb(1.0, 0.94, 0.85), ..default() },
         Transform::from_xyz(-1.0, 2.0, 1.5).looking_at(Vec3::ZERO, Vec3::Y),
         layer.clone(),
     ));
@@ -102,16 +102,27 @@ fn setup(
 /// The portraits only need to be drawn once: switch the studio off afterwards.
 /// Shaders compile in the background on the first frames, so keep the studio
 /// running for a while (by real time and frame count) before switching it off.
+/// Only one portrait camera draws per frame, in turn: drawing all of them every
+/// frame made the first seconds of play stutter. A camera that is switched off
+/// keeps its last picture.
 fn finish(
     mut commands: Commands,
     time: Res<Time<Real>>,
     mut cams: Query<(Entity, &mut Camera, &mut StudioCam)>,
     props: Query<Entity, With<StudioProp>>,
+    mut frame: Local<u32>,
 ) {
     let mut done = false;
     let late = time.elapsed_secs() > 10.0;
+    let count = cams.iter().count().max(1) as u32;
+    *frame += 1;
     for (e, mut cam, mut sc) in &mut cams {
         sc.0 += 1;
+        let slot = (-1 - cam.order).max(0) as u32;
+        let turn = (*frame + slot) % count == 0;
+        if cam.is_active != turn {
+            cam.is_active = turn;
+        }
         if late && sc.0 > 60 {
             cam.is_active = false;
             if sc.0 > 64 {
