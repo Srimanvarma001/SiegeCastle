@@ -229,6 +229,63 @@ fn smooth(avg: f32, sample: f32) -> f32 {
     if avg == 0.0 { sample } else { avg * 0.95 + sample * 0.05 }
 }
 
+/// Sorts mesh entities by what they belong to, for the profiler.
+#[derive(bevy::ecs::system::SystemParam)]
+struct Census<'w, 's> {
+    meshes: Query<'w, 's, (Entity, &'static ViewVisibility), With<Mesh3d>>,
+    fx_kinds: Query<'w, 's, &'static crate::vfx::Fx>,
+    parents: Query<'w, 's, &'static ChildOf>,
+    fx: Query<'w, 's, (), With<crate::vfx::Fx>>,
+    troops: Query<'w, 's, (), (With<Enemy>, Without<Boss>)>,
+    bosses: Query<'w, 's, (), Or<(With<Boss>, With<crate::boss::Wreck>)>>,
+    coins: Query<'w, 's, (), With<crate::combat::Coin>>,
+    corpses: Query<'w, 's, (), With<crate::enemy::Corpse>>,
+    villages: Query<'w, 's, (), With<crate::world::Village>>,
+    sheep: Query<'w, 's, (), With<crate::world::Sheep>>,
+    castle: Query<'w, 's, (), With<Castle>>,
+}
+
+impl Census<'_, '_> {
+    fn owner(&self, mut e: Entity) -> &'static str {
+        loop {
+            if self.fx.contains(e) {
+                return "effects";
+            } else if self.troops.contains(e) {
+                return "troops";
+            } else if self.bosses.contains(e) {
+                return "bosses";
+            } else if self.coins.contains(e) {
+                return "coins";
+            } else if self.corpses.contains(e) {
+                return "corpses";
+            } else if self.villages.contains(e) {
+                return "farms";
+            } else if self.sheep.contains(e) {
+                return "sheep";
+            } else if self.castle.contains(e) {
+                return "castle";
+            }
+            match self.parents.get(e) {
+                Ok(p) => e = p.parent(),
+                Err(_) => return "world/other",
+            }
+        }
+    }
+
+    fn count(&self, meshes: impl Iterator<Item = Entity>) -> String {
+        let mut counts: Vec<(&str, usize)> = Vec::new();
+        for e in meshes {
+            let o = self.owner(e);
+            match counts.iter_mut().find(|(n, _)| *n == o) {
+                Some((_, c)) => *c += 1,
+                None => counts.push((o, 1)),
+            }
+        }
+        counts.sort_by_key(|c| std::cmp::Reverse(c.1));
+        counts.iter().map(|(n, c)| format!("{n}={c}")).collect::<Vec<_>>().join(" ")
+    }
+}
+
 /// Camera override for looking at the castle up close.
 #[derive(Resource)]
 struct CloseUp {
@@ -443,8 +500,7 @@ fn debug_tick(
     mut cfg: ResMut<DebugConfig>,
     profile: Option<Res<FrameCpu>>,
     render_cpu: Option<Res<RenderCpu>>,
-    meshes: Query<&ViewVisibility, With<Mesh3d>>,
-    fx: Query<&crate::vfx::Fx>,
+    census: Census,
 ) {
     let t = stats.time;
     if keys.just_pressed(KeyCode::F12) {
@@ -503,9 +559,10 @@ fn debug_tick(
                     gpu.join(" ")
                 );
                 // What the render thread has to prepare every frame.
-                let visible = meshes.iter().filter(|v| v.get()).count();
+                let visible = census.meshes.iter().filter(|(_, v)| v.get()).count();
+                info!("profile: visible meshes by owner: {}", census.count(census.meshes.iter().filter(|(_, v)| v.get()).map(|(e, _)| e)));
                 let mut kinds: Vec<(String, usize)> = Vec::new();
-                for f in &fx {
+                for f in &census.fx_kinds {
                     let name = format!("{:?}", f.kind());
                     let name = name.split(' ').next().unwrap_or("").to_string();
                     match kinds.iter_mut().find(|(n, _)| *n == name) {
@@ -515,7 +572,7 @@ fn debug_tick(
                 }
                 kinds.sort_by_key(|k| std::cmp::Reverse(k.1));
                 let top: Vec<String> = kinds.iter().take(6).map(|(n, c)| format!("{n}={c}")).collect();
-                info!("profile: meshes={} visible={visible} effects={} ({})", meshes.iter().count(), fx.iter().count(), top.join(" "));
+                info!("profile: meshes={} visible={visible} effects={} ({})", census.meshes.iter().count(), census.fx_kinds.iter().count(), top.join(" "));
             }
         }
     }

@@ -60,6 +60,9 @@ fn release_window_views(
     }
 }
 
+/// Render layer of the screen camera (nothing 3D is on it).
+const SCREEN_LAYER: usize = 30;
+
 /// The game's 3D camera (not the card-portrait cameras).
 #[derive(Component)]
 pub struct MainCamera;
@@ -76,6 +79,10 @@ fn spawn_screen(mut commands: Commands, scene: Res<SceneImage>) {
         IsDefaultUiCamera,
         Msaa::Off,
         Tonemapping::None,
+        // Its own layer: it only draws the UI. On the default layer its huge 2D
+        // view box counted every 3D mesh on the map as visible, so the renderer
+        // prepared the whole world each frame instead of what the 3D camera sees.
+        bevy::camera::visibility::RenderLayers::layer(SCREEN_LAYER),
     ));
     // Under every other UI node, stretched to the window (smoothly filtered).
     commands.spawn((
