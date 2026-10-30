@@ -446,6 +446,8 @@ fn debug_tick(
     mut cfg: ResMut<DebugConfig>,
     profile: Option<Res<FrameCpu>>,
     render_cpu: Option<Res<RenderCpu>>,
+    meshes: Query<&ViewVisibility, With<Mesh3d>>,
+    fx: Query<&crate::vfx::Fx>,
 ) {
     let t = stats.time;
     if keys.just_pressed(KeyCode::F12) {
@@ -503,6 +505,20 @@ fn debug_tick(
                     profile.avg_ms,
                     gpu.join(" ")
                 );
+                // What the render thread has to prepare every frame.
+                let visible = meshes.iter().filter(|v| v.get()).count();
+                let mut kinds: Vec<(String, usize)> = Vec::new();
+                for f in &fx {
+                    let name = format!("{:?}", f.kind());
+                    let name = name.split(' ').next().unwrap_or("").to_string();
+                    match kinds.iter_mut().find(|(n, _)| *n == name) {
+                        Some((_, c)) => *c += 1,
+                        None => kinds.push((name, 1)),
+                    }
+                }
+                kinds.sort_by_key(|k| std::cmp::Reverse(k.1));
+                let top: Vec<String> = kinds.iter().take(6).map(|(n, c)| format!("{n}={c}")).collect();
+                info!("profile: meshes={} visible={visible} effects={} ({})", meshes.iter().count(), fx.iter().count(), top.join(" "));
             }
         }
     }

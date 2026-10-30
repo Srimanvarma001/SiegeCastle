@@ -190,11 +190,12 @@ pub fn drive(
         _ => (13.0, 9.0),
     };
     c.track_acc += c.speed.abs() * dt;
-    while c.track_acc > 0.8 {
-        c.track_acc -= 0.8;
+    while c.track_acc > 1.6 {
+        c.track_acc -= 1.6;
         let back = c.track_acc;
         for s in [-1.0, 1.0] {
-            let p = next - fwd * (len * 0.32 + back) + side * s * (wid / 2.0 - 0.2);
+            // Segments are 1.6 m long; keep their front end just behind the wheels.
+            let p = next - fwd * (len * 0.32 + back + 0.4) + side * s * (wid / 2.0 - 0.2);
             let e = spawn_fx_rot(&mut commands, &assets, FxKind::Track, w3(p, 0.025), 0.55 + loadout.stage as f32 * 0.15, c.heading);
             tracks.0.push_back(e);
             if tracks.0.len() > MAX_TRACKS

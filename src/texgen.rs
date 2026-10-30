@@ -381,7 +381,8 @@ pub(crate) fn image_with_mips_sized(pixels: Vec<[f32; 4]>, w0: usize, h0: usize,
     img
 }
 
-fn upload(m: Maps, images: &mut Assets<Image>) -> SurfaceTextures {
+/// Color, normal and roughness/metal images (with mipmaps) for a surface.
+fn surface_images(m: Maps) -> [Image; 3] {
     // Colors are authored directly in sRGB.
     let to_srgb = |c: f32| c.clamp(0.0, 1.0);
     let color: Vec<[f32; 4]> = m.color.iter().map(|c| [to_srgb(c.x), to_srgb(c.y), to_srgb(c.z), 1.0]).collect();
@@ -398,14 +399,14 @@ fn upload(m: Maps, images: &mut Assets<Image>) -> SurfaceTextures {
     }
     let rm: Vec<[f32; 4]> = m.rough.iter().zip(&m.metal).map(|(r, mt)| [1.0, *r, *mt, 1.0]).collect();
 
-    SurfaceTextures {
-        color: images.add(image_with_mips(color, TextureFormat::Rgba8UnormSrgb, false)),
-        normal: images.add(image_with_mips(normal, TextureFormat::Rgba8Unorm, true)),
-        rough_metal: images.add(image_with_mips(rm, TextureFormat::Rgba8Unorm, false)),
-    }
+    [
+        image_with_mips(color, TextureFormat::Rgba8UnormSrgb, false),
+        image_with_mips(normal, TextureFormat::Rgba8Unorm, true),
+        image_with_mips(rm, TextureFormat::Rgba8Unorm, false),
+    ]
 }
 
-pub fn build(surface: Surface, images: &mut Assets<Image>) -> SurfaceTextures {
+fn make_surface(surface: Surface) -> [Image; 3] {
     let maps = match surface {
         Surface::Stone => stone(),
         Surface::Slate => slate(),
@@ -417,7 +418,29 @@ pub fn build(surface: Surface, images: &mut Assets<Image>) -> SurfaceTextures {
         Surface::Plaster => plaster(),
         Surface::Bark => bark(),
     };
-    upload(maps, images)
+    surface_images(maps)
+}
+
+/// Every texture the game generates: one set per surface, the foliage atlas
+/// and the road. Each is built on its own thread (the noise is slow), then
+/// handed to Bevy on this one.
+pub fn build_all(surfaces: &[Surface], images: &mut Assets<Image>) -> (Vec<SurfaceTextures>, Handle<Image>, Handle<Image>) {
+    let (sets, foliage, road) = std::thread::scope(|sc| {
+        let sets: Vec<_> = surfaces.iter().map(|&s| sc.spawn(move || make_surface(s))).collect();
+        let foliage = sc.spawn(foliage_image);
+        let road = sc.spawn(road_image);
+        let sets: Vec<[Image; 3]> = sets.into_iter().map(|h| h.join().expect("texture thread panicked")).collect();
+        (sets, foliage.join().expect("texture thread panicked"), road.join().expect("texture thread panicked"))
+    });
+    let sets = sets
+        .into_iter()
+        .map(|[color, normal, rough_metal]| SurfaceTextures {
+            color: images.add(color),
+            normal: images.add(normal),
+            rough_metal: images.add(rough_metal),
+        })
+        .collect();
+    (sets, images.add(foliage), images.add(road))
 }
 
 // --- Foliage and roads (with transparency) -------------------------------------
@@ -449,15 +472,23 @@ impl Rgba {
     fn leaf(&mut self, base: Vec2, angle: f32, len: f32, wid: f32, c: Vec3, rib: bool) {
         let dir = Vec2::from_angle(angle);
         let side = Vec2::new(-dir.y, dir.x);
-        let r = len.max(wid) + 2.0;
-        for y in (base.y - r) as i32..=(base.y + r) as i32 {
-            for x in (base.x - r) as i32..=(base.x + r) as i32 {
+        // Only the pixels the leaf can touch: a box around it (it is long and
+        // thin, so a square of its length would test ~100x as many pixels).
+        let reach = side * (wid * 0.5 + 1.5);
+        let tip = base + dir * len;
+        let (lo, hi) = (base.min(tip) - reach.abs() - Vec2::ONE, base.max(tip) + reach.abs() + Vec2::ONE);
+        let (x0, x1) = ((lo.x.floor() as i32).max(0), (hi.x.ceil() as i32).min(self.w as i32 - 1));
+        let (y0, y1) = ((lo.y.floor() as i32).max(0), (hi.y.ceil() as i32).min(self.h as i32 - 1));
+        for y in y0..=y1 {
+            for x in x0..=x1 {
                 let d = Vec2::new(x as f32 + 0.5, y as f32 + 0.5) - base;
                 let t = d.dot(dir) / len;
                 if !(0.0..=1.0).contains(&t) {
                     continue;
                 }
-                let half = wid * 0.5 * (std::f32::consts::PI * t).sin().powf(0.8);
+                // `max(0)`: at the very tip sin(pi) is a hair below zero, and a
+                // negative number to the power 0.8 is NaN (a black pixel).
+                let half = wid * 0.5 * (std::f32::consts::PI * t).sin().max(0.0).powf(0.8);
                 let across = d.dot(side);
                 let cover = (half - across.abs() + 0.7).clamp(0.0, 1.0);
                 if cover <= 0.0 {
@@ -517,7 +548,7 @@ impl Dice {
 /// Foliage atlas, 1024x1024 in four 512 cells:
 /// top-left broadleaf cluster, top-right lighter broadleaf,
 /// bottom-left fir branch, bottom-right grass blades with wildflowers.
-pub fn foliage(images: &mut Assets<Image>) -> Handle<Image> {
+fn foliage_image() -> Image {
     let mut c = Rgba::new(1024, 1024);
     let mut d = Dice(12345);
     for (cell, (dark, light)) in [(0usize, (rgb(0.14, 0.24, 0.08), rgb(0.30, 0.42, 0.14))), (1, (rgb(0.22, 0.32, 0.10), rgb(0.42, 0.50, 0.18)))] {
@@ -591,12 +622,12 @@ pub fn foliage(images: &mut Assets<Image>) -> Handle<Image> {
         s.address_mode_u = ImageAddressMode::ClampToEdge;
         s.address_mode_v = ImageAddressMode::ClampToEdge;
     }
-    images.add(img)
+    img
 }
 
 /// Dirt road: soft grassy edges, two wheel ruts and a grass strip in the middle.
 /// U runs across the road (0..1), V along it (tiles).
-pub fn road(images: &mut Assets<Image>) -> Handle<Image> {
+fn road_image() -> Image {
     let (w, h) = (256usize, 512usize);
     let mut px = Vec::with_capacity(w * h);
     for y in 0..h {
@@ -620,5 +651,6 @@ pub fn road(images: &mut Assets<Image>) -> Handle<Image> {
     if let ImageSampler::Descriptor(s) = &mut img.sampler {
         s.address_mode_u = ImageAddressMode::ClampToEdge;
     }
-    images.add(img)
+    img
 }
+

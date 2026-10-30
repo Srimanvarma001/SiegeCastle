@@ -191,13 +191,14 @@ pub fn create_assets(
     mut fonts: ResMut<Assets<Font>>,
     mut next: ResMut<NextState<GameState>>,
 ) {
-    // Surfaces.
-    let mut tex: HashMap<Surface, texgen::SurfaceTextures> = HashMap::default();
-    for s in [Surface::Stone, Surface::Slate, Surface::Wood, Surface::Iron, Surface::Grass, Surface::Mud, Surface::Wheat, Surface::Plaster, Surface::Bark] {
-        tex.insert(s, texgen::build(s, &mut images));
-    }
-    let foliage = texgen::foliage(&mut images);
-    let road_tex = texgen::road(&mut images);
+    let start = std::time::Instant::now();
+    let mut times: Vec<(&str, f32)> = Vec::new();
+    let mut lap = |name: &'static str| times.push((name, start.elapsed().as_secs_f32() * 1000.0));
+    // Surfaces, built in parallel.
+    let surfaces = [Surface::Stone, Surface::Slate, Surface::Wood, Surface::Iron, Surface::Grass, Surface::Mud, Surface::Wheat, Surface::Plaster, Surface::Bark];
+    let (sets, foliage, road_tex) = texgen::build_all(&surfaces, &mut images);
+    let tex: HashMap<Surface, texgen::SurfaceTextures> = surfaces.into_iter().zip(sets).collect();
+    lap("textures");
     let mut mats: HashMap<Mat, Handle<StandardMaterial>> = HashMap::default();
     for m in Mat::ALL {
         let mat = match m.surface() {
@@ -251,6 +252,7 @@ pub fn create_assets(
         mats.insert(m, materials.add(mat));
     }
 
+    lap("materials");
     let mut castle = HashMap::default();
     let mut castle_rigs = HashMap::default();
     let mut kinds = vec![(0, Variant::Base)];
@@ -276,6 +278,7 @@ pub fn create_assets(
             (k, crate::weapons::RigHandle { base: upload(&mut meshes, &mats, rig.base), parts })
         })
         .collect();
+    lap("castles+weapons");
     let mut enemies = HashMap::default();
     enemies.insert(EnemyKind::Footman, vec![meshes.add(models::spearman()), meshes.add(models::man_at_arms())]);
     enemies.insert(EnemyKind::Archer, vec![meshes.add(models::archer())]);
@@ -292,7 +295,9 @@ pub fn create_assets(
         let models = rig.models.into_iter().map(|m| upload(&mut meshes, &mats, m)).collect();
         bosses.insert(kind, Rig { models, parts: rig.parts });
     }
+    lap("troops+bosses");
     let vfx = crate::vfx::build_assets(&mut meshes, &mut materials, &mut images);
+    lap("effects");
 
     let glow = |c: Color, e: LinearRgba| StandardMaterial { base_color: c, emissive: e, unlit: true, ..default() };
     let m = Mats {
@@ -376,5 +381,9 @@ pub fn create_assets(
         mats,
         m,
     });
+    lap("total");
+    // Load-time breakdown (milliseconds since this system started).
+    let line: Vec<String> = times.iter().map(|(n, ms)| format!("{n}@{ms:.0}")).collect();
+    info!("startup: assets {}", line.join(" "));
     next.set(GameState::Starting);
 }

@@ -159,12 +159,36 @@ fn spawn_light(mut commands: Commands) {
     ));
 }
 
+/// A piece of scenery placed in a map chunk: position, size, then its own
+/// random numbers (so it can be built on any thread and still look the same).
+#[derive(Clone, Copy)]
+enum Plant {
+    Tree(Vec3, f32, f32, u32),
+    Pine(Vec3, f32, u32),
+    Bush(Vec3, f32, u32),
+    Rock(Vec3, f32, u32),
+    Grass(Vec3, f32, u32),
+}
+
+impl Plant {
+    fn add_to(self, m: &mut Model) {
+        match self {
+            Plant::Tree(p, size, hue, seed) => models::add_tree(m, p, size, hue, seed),
+            Plant::Pine(p, size, seed) => models::add_pine(m, p, size, seed),
+            Plant::Bush(p, size, seed) => models::add_bush(m, p, size, seed),
+            Plant::Rock(p, size, seed) => models::add_rock(m, p, size, seed),
+            Plant::Grass(p, size, seed) => models::add_grass(m, p, size, seed),
+        }
+    }
+}
+
 fn spawn_world(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     assets: Res<GameAssets>,
     mut rng: ResMut<GameRng>,
 ) {
+    let start = std::time::Instant::now();
     let seed: u32 = rng.0.random();
 
     // Water and roads first, so everything else can avoid them.
@@ -249,10 +273,10 @@ fn spawn_world(
         let f = |v: f32| (((v + MAP_HALF + 40.0) / (2.0 * MAP_HALF + 80.0)) * CHUNKS as f32).clamp(0.0, CHUNKS as f32 - 1.0) as usize;
         f(p.y) * CHUNKS + f(p.x)
     };
-    let mut solid: Vec<Model> = (0..CHUNKS * CHUNKS).map(|_| Model::new()).collect();
-    let mut grass: Vec<Model> = (0..CHUNKS * CHUNKS).map(|_| Model::new()).collect();
-    let mut has_solid = [false; CHUNKS * CHUNKS];
-    let mut has_grass = [false; CHUNKS * CHUNKS];
+    // What goes in each chunk is decided here, in order (it uses the shared
+    // random numbers); the geometry is built afterwards on several threads.
+    let mut solid: Vec<Vec<Plant>> = vec![Vec::new(); CHUNKS * CHUNKS];
+    let mut grass: Vec<Vec<Plant>> = vec![Vec::new(); CHUNKS * CHUNKS];
     let free = |p: Vec2| p.length() > 28.0 && !w.near(p, 3.0) && p.x.abs() < MAP_HALF - 4.0 && p.y.abs() < MAP_HALF - 4.0;
 
     for _ in 0..120 {
@@ -262,8 +286,7 @@ fn spawn_world(
             let p = c + Vec2::new(rng.0.random_range(-12.0..12.0), rng.0.random_range(-9.0..9.0));
             if free(p) {
                 let k = chunk_of(p);
-                models::add_tree(&mut solid[k], w3(p, 0.0), rng.0.random_range(0.8..1.3), rng.0.random_range(0.0..1.0), rng.0.random());
-                has_solid[k] = true;
+                solid[k].push(Plant::Tree(w3(p, 0.0), rng.0.random_range(0.8..1.3), rng.0.random_range(0.0..1.0), rng.0.random()));
             }
         }
     }
@@ -271,16 +294,14 @@ fn spawn_world(
         let p = Vec2::new(rng.0.random_range(-215.0..215.0), rng.0.random_range(-215.0..215.0));
         if free(p) {
             let k = chunk_of(p);
-            models::add_tree(&mut solid[k], w3(p, 0.0), rng.0.random_range(0.7..1.1), rng.0.random_range(0.0..1.0), rng.0.random());
-            has_solid[k] = true;
+            solid[k].push(Plant::Tree(w3(p, 0.0), rng.0.random_range(0.7..1.1), rng.0.random_range(0.0..1.0), rng.0.random()));
         }
     }
     for _ in 0..160 {
         let p = Vec2::new(rng.0.random_range(-215.0..215.0), rng.0.random_range(-215.0..215.0));
         if free(p) {
             let k = chunk_of(p);
-            models::add_rock(&mut solid[k], w3(p, 0.1), rng.0.random_range(0.3..0.8), rng.0.random());
-            has_solid[k] = true;
+            solid[k].push(Plant::Rock(w3(p, 0.1), rng.0.random_range(0.3..0.8), rng.0.random()));
         }
     }
     // A wall of pines around the edge of the map.
@@ -296,8 +317,7 @@ fn spawn_world(
             for row in 0..2 {
                 let q = p + jitter * row as f32 + Vec2::new(rng.0.random_range(-1.5..1.5), rng.0.random_range(-1.5..1.5));
                 let k = chunk_of(q);
-                models::add_pine(&mut solid[k], w3(q, 0.0), rng.0.random_range(1.2..1.8), rng.0.random());
-                has_solid[k] = true;
+                solid[k].push(Plant::Pine(w3(q, 0.0), rng.0.random_range(1.2..1.8), rng.0.random()));
             }
         }
         t += 4.5;
@@ -306,31 +326,36 @@ fn spawn_world(
         let p = Vec2::new(rng.0.random_range(-215.0..215.0), rng.0.random_range(-215.0..215.0));
         if free(p) {
             let k = chunk_of(p);
-            models::add_bush(&mut solid[k], w3(p, 0.0), rng.0.random_range(0.8..1.5), rng.0.random());
-            has_solid[k] = true;
+            solid[k].push(Plant::Bush(w3(p, 0.0), rng.0.random_range(0.8..1.5), rng.0.random()));
         }
     }
     for _ in 0..9000 {
         let p = Vec2::new(rng.0.random_range(-218.0..218.0), rng.0.random_range(-218.0..218.0));
         if !w.near(p, 1.0) {
             let k = chunk_of(p);
-            models::add_grass(&mut grass[k], w3(p, 0.0), rng.0.random_range(0.8..1.6), rng.0.random());
-            has_grass[k] = true;
+            grass[k].push(Plant::Grass(w3(p, 0.0), rng.0.random_range(0.8..1.6), rng.0.random()));
         }
     }
-    for (k, model) in solid.into_iter().enumerate() {
-        if has_solid[k] {
-            for (mat, mesh) in model.build() {
-                commands.spawn((GameEntity, Mesh3d(meshes.add(mesh)), MeshMaterial3d(assets.mat(mat)), Transform::IDENTITY));
-            }
-        }
-    }
-    for (k, model) in grass.into_iter().enumerate() {
-        if has_grass[k] {
-            for (mat, mesh) in model.build() {
-                commands.spawn((GameEntity, Mesh3d(meshes.add(mesh)), MeshMaterial3d(assets.mat(mat)), Transform::IDENTITY));
-            }
-        }
+    // Build each chunk's meshes on its own thread.
+    let built: Vec<Vec<(models::Mat, Mesh)>> = std::thread::scope(|sc| {
+        let jobs: Vec<_> = solid
+            .iter()
+            .chain(grass.iter())
+            .filter(|plants| !plants.is_empty())
+            .map(|plants| {
+                sc.spawn(move || {
+                    let mut m = Model::new();
+                    for p in plants {
+                        p.add_to(&mut m);
+                    }
+                    m.build()
+                })
+            })
+            .collect();
+        jobs.into_iter().map(|j| j.join().expect("scenery thread panicked")).collect()
+    });
+    for (mat, mesh) in built.into_iter().flatten() {
+        commands.spawn((GameEntity, Mesh3d(meshes.add(mesh)), MeshMaterial3d(assets.mat(mat)), Transform::IDENTITY));
     }
 
     // Farms and sheep.
@@ -345,6 +370,7 @@ fn spawn_world(
         }
     }
     commands.insert_resource(water);
+    info!("startup: world {:.0} ms", start.elapsed().as_secs_f32() * 1000.0);
 }
 
 fn free_spot(rng: &mut GameRng, water: &Water, avoid: Vec2, min_dist: f32) -> Option<Vec2> {

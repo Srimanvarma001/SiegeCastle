@@ -207,9 +207,11 @@ fn trails(
 ) {
     let dt = time.delta_secs();
     for (tf, mesh, b) in &bullets {
-        if mesh.0 == assets.ball && rnd() < dt / 0.03 {
+        // A puff every 0.06 s, a bit larger: the same trail with half the
+        // effects (trails were the largest group of effects in big fights).
+        if mesh.0 == assets.ball && rnd() < dt / 0.06 {
             let back = w3(-b.vel.normalize_or_zero(), 0.0);
-            let size = if b.hostile { 1.2 } else { 0.85 };
+            let size = if b.hostile { 1.55 } else { 1.1 };
             spawn_fx(&mut commands, &assets, FxKind::Wisp, tf.translation + back * 0.3, size, back * 1.5 + Vec3::Y * 0.3);
         }
     }
@@ -222,10 +224,10 @@ fn trails(
             if rnd() < dt / 0.07 {
                 spawn_fx(&mut commands, &assets, FxKind::Dust, tf.translation, 1.6, Vec3::Y * 0.2);
             }
-        } else if rnd() < dt / 0.035 {
+        } else if rnd() < dt / 0.07 {
             // A lit fuse trailing smoke.
-            spawn_fx(&mut commands, &assets, FxKind::Wisp, tf.translation, 0.8, Vec3::Y * 0.3);
-            if rnd() < 0.35 {
+            spawn_fx(&mut commands, &assets, FxKind::Wisp, tf.translation, 1.05, Vec3::Y * 0.3);
+            if rnd() < 0.7 {
                 spawn_fx(&mut commands, &assets, FxKind::Ember, tf.translation, 0.7, Vec3::Y * 0.5);
             }
         }

@@ -404,6 +404,13 @@ pub struct Fx {
     base: Vec3,
 }
 
+impl Fx {
+    /// What kind of effect this is (for the profiler's census).
+    pub fn kind(&self) -> FxKind {
+        self.kind
+    }
+}
+
 /// An effect that was skipped: removed again on the next update.
 fn skipped(commands: &mut Commands) -> Entity {
     commands
@@ -510,7 +517,8 @@ pub fn spawn_fx(commands: &mut Commands, assets: &GameAssets, kind: FxKind, pos:
         }
         FxKind::Track => {
             fx.life = 7.0;
-            (&assets.rut, &v.rut[0], Transform::from_translation(pos).with_scale(Vec3::new(0.82, 1.0, size)))
+            // 1.6 m long: the castle lays one every 1.6 m, bosses too.
+            (&assets.rut, &v.rut[0], Transform::from_translation(pos).with_scale(Vec3::new(1.62, 1.0, size)))
         }
         FxKind::Dirt => {
             fx.life = 60.0;
