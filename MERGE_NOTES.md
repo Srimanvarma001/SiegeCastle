@@ -323,3 +323,19 @@ graphics-polish checklists): the Iron Citadel against the Warlord, a
 level-up card screen, and a busy endless-mode moment with the Siege Tower.
 The README caption said "Grand Citadel", which is not a stage name; it now
 says "Iron Citadel".
+
+## Changes asked for after the merges
+
+- **One boss at a time.** The boss countdown now waits while a boss is on
+  the field and starts again once it has fallen, in endless mode too, and
+  the HUD hides the countdown during a fight. (With the longer fights from
+  the bosses step, the next boss could otherwise arrive before the last one
+  fell.) The War Wagon, which came as a pair, now comes alone with double
+  health (4800) and goes berserk below 40% health instead of when its
+  partner dies. Checked in a sped-up run: the Siege Tower fell at ~125 s and
+  the War Wagon arrived 150 s after that, alone.
+- **Health bars above bosses.** A bar floats above every boss, including the
+  building-like ones (Siege Tower, Trebuchet Fortress, Warlord's Citadel).
+  Troops and sheep have none. It is part of the HUD (sharp at any zoom),
+  stays below the top bars, hides when the boss is off screen and is removed
+  when the boss falls.
