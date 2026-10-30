@@ -13,6 +13,7 @@ Every branch and worktree is kept; nothing was force-pushed.
 | `graphics-polish` / `worktree-graphics-polish` | `.claude/worktrees/graphics-polish` | New effects (`vfx.rs`), new HUD, castle and weapon animation (`anim.rs`) |
 | `worktree-weapon-mounts` | `.claude/worktrees/weapon-mounts` | All six weapons rebuilt and animated (`weapons.rs`), proper wall platforms |
 | `merge-all` | scratchpad | Temporary branch used to do the merges; same commit as `main` |
+| `worktree-gameplay-polish` | `.claude/worktrees/gameplay-polish` | Started by another Claude session near the end of this work (champion troops, sound, HUD and progression changes). See the last section. |
 
 ## Order
 
@@ -343,3 +344,16 @@ says "Iron Citadel".
   fight made `f32::clamp` panic (its limits crossed at window size 0).
   Reproduced by minimizing the game from a script, fixed, and re-tested
   (minimized and restored twice mid-fight, no crash).
+
+## worktree-gameplay-polish (still in progress elsewhere)
+
+Created near the end of this work by another Claude session that was still
+running ("busy") when this was written. The branch has **no commits** of its
+own: it points at `4c1b726`, which is already in `main`, so as a branch it is
+merged. Its work so far is uncommitted in its own worktree (champion troops
+leading formations, `bevy_audio`, HUD, player and progression changes). It
+was left alone: finishing or merging someone else's half-done edits would
+step on that session. That session was sent a message that `main` has moved
+on (one-boss-at-a-time, boss health bars, the minimize crash fix) and which
+files will conflict (`director.rs`, `hud.rs`, `enemy.rs`, `boss.rs`), so it can
+merge `main` in before it finishes.
