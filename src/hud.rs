@@ -31,10 +31,19 @@ impl Plugin for HudPlugin {
             .add_systems(OnEnter(GameState::Starting), |mut a: ResMut<HudAnim>| *a = HudAnim::default())
             .add_systems(
                 Update,
-                (update_bars, update_boss, update_slots, update_artifacts, update_info, update_banner, update_overlay, update_vignette),
+                (update_bars, update_boss, boss_tags, update_slots, update_artifacts, update_info, update_banner, update_overlay, update_vignette),
             );
     }
 }
+
+/// A health bar floating above one boss.
+#[derive(Component)]
+struct BossTag {
+    boss: Entity,
+    fill: Entity,
+}
+#[derive(Component)]
+struct BossTagFill;
 
 #[derive(Component)]
 struct XpFill;
@@ -789,9 +798,16 @@ fn update_boss(
         .iter()
         .min_by(|a, b| p2(a.0.translation).distance(cpos).total_cmp(&p2(b.0.translation).distance(cpos)));
 
-    // The countdown throbs during its last ten seconds.
+    // The countdown throbs during its last ten seconds. It waits (and is
+    // hidden) while a boss is on the field: one boss at a time.
     let mut throb = 1.0;
+    let fighting = nearest.is_some();
     match (director.endless, director.next_boss()) {
+        (false, Some(_)) if fighting => *tv = Visibility::Hidden,
+        (true, _) if fighting => {
+            *tv = Visibility::Inherited;
+            set(&mut tt, format!("ENDLESS  {}", fmt_time(director.endless_time)));
+        }
         (false, Some(_)) if director.boss_timer.is_finite() => {
             *tv = Visibility::Inherited;
             set(&mut tt, format!("BOSS IN {}", fmt_time(director.boss_timer)));
@@ -1122,5 +1138,106 @@ fn update_vignette(
     };
     if *g != want {
         *g = want;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Health bars above the bosses
+// ---------------------------------------------------------------------------
+
+const TAG_W: f32 = 150.0;
+const TAG_H: f32 = 11.0;
+/// Bars never go higher than this (logical px), so they stay clear of the top HUD.
+const TAG_MIN_Y: f32 = 160.0;
+
+/// A health bar floats above every boss, the moving fortresses included (the
+/// Siege Tower, the Trebuchet Fortress and the Warlord's Citadel). Troops and
+/// sheep have none. Drawn as UI so it stays sharp and the same size at any zoom.
+fn boss_tags(
+    mut commands: Commands,
+    bosses: Query<(Entity, &GlobalTransform, &Enemy), With<Boss>>,
+    cams: Query<(&Camera, &GlobalTransform), With<crate::graphics::MainCamera>>,
+    windows: Query<&Window, With<bevy::window::PrimaryWindow>>,
+    mut tags: Query<(Entity, &BossTag, &mut Node, &mut Visibility), Without<BossTagFill>>,
+    mut fills: Query<&mut Node, (With<BossTagFill>, Without<BossTag>)>,
+) {
+    // A bar for every new boss.
+    for (e, _, _) in &bosses {
+        if tags.iter().any(|(_, t, _, _)| t.boss == e) {
+            continue;
+        }
+        let mut fill = Entity::PLACEHOLDER;
+        let tag = commands
+            .spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    width: Val::Px(TAG_W),
+                    height: Val::Px(TAG_H),
+                    border: UiRect::all(Val::Px(1.5)),
+                    border_radius: round(5.5),
+                    overflow: Overflow::clip(),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.05, 0.04, 0.03, 0.8)),
+                BorderColor::all(BRONZE),
+                GlobalZIndex(-10),
+                Visibility::Hidden,
+            ))
+            .with_children(|p| {
+                fill = p
+                    .spawn((
+                        BossTagFill,
+                        fill_node(),
+                        BackgroundGradient::from(LinearGradient::to_right(vec![
+                            ColorStop::auto(Color::srgb(0.55, 0.06, 0.05)),
+                            ColorStop::auto(Color::srgb(0.88, 0.18, 0.11)),
+                        ])),
+                    ))
+                    .id();
+                p.spawn(gloss());
+            })
+            .id();
+        commands.entity(tag).insert(BossTag { boss: e, fill });
+    }
+
+    let (Ok((cam, cam_gt)), Ok(window)) = (cams.single(), windows.single()) else {
+        return;
+    };
+    // The 3D camera draws into an image smaller than the window (render
+    // scale); UI positions are in window units.
+    let Some(view) = cam.logical_viewport_size() else {
+        return;
+    };
+    let win = Vec2::new(window.width(), window.height());
+    let to_ui = win / view.max(Vec2::ONE);
+    let on_screen = |p: Vec2| p.x >= 0.0 && p.y >= 0.0 && p.x <= win.x && p.y <= win.y;
+    for (tag_e, tag, mut node, mut vis) in &mut tags {
+        let Ok((_, gt, en)) = bosses.get(tag.boss) else {
+            // Destroyed (its collapse plays without a bar).
+            commands.entity(tag_e).despawn();
+            continue;
+        };
+        let base = gt.translation();
+        let top = base + Vec3::Y * (crate::boss::spec(en.kind).height + 3.0);
+        let project = |p: Vec3| cam.world_to_viewport(cam_gt, p).ok().map(|v| v * to_ui);
+        let (top_ui, base_ui) = (project(top), project(base));
+        // Shown while any of the boss is on screen; kept below the top HUD.
+        let shown = top_ui.is_some_and(on_screen) || base_ui.is_some_and(on_screen);
+        let want = if shown { Visibility::Inherited } else { Visibility::Hidden };
+        if *vis != want {
+            *vis = want;
+        }
+        let Some(at) = top_ui.or(base_ui) else {
+            continue;
+        };
+        if shown {
+            let x = (at.x - TAG_W / 2.0).clamp(4.0, win.x - TAG_W - 4.0);
+            let y = (at.y - TAG_H - 6.0).clamp(TAG_MIN_Y, win.y - TAG_H - 120.0);
+            node.left = Val::Px(x);
+            node.top = Val::Px(y);
+        }
+        if let Ok(mut f) = fills.get_mut(tag.fill) {
+            f.width = Val::Percent((en.hp / en.max_hp).clamp(0.0, 1.0) * 100.0);
+        }
     }
 }

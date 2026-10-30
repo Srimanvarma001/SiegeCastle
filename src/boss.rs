@@ -73,8 +73,8 @@ pub fn spec(kind: EnemyKind) -> Spec {
             track: 5.9,
             track_size: 1.3,
             smoke: &WAGON_SMOKE,
-            title: "TWIN WAR WAGONS",
-            hint: "They flank you from both sides. Stay out of their broadsides.",
+            title: "THE WAR WAGON",
+            hint: "It circles you while its turret tracks you. Stay out of its broadsides.",
         },
         EnemyKind::Juggernaut => Spec {
             height: 26.0,

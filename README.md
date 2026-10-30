@@ -76,12 +76,12 @@ Growing fully repairs the castle and blasts nearby enemies away.
 
 **Enemies** march in formations and swarm you up close: footmen, archers who shoot back, knights on horseback, and spiked war carts.
 
-**Bosses** arrive on a countdown (shown under the XP bar). They are colossal, many times the size of your castle: the camera pulls back when one is near, and a red arrow points to it when it is out of sight. You cannot drive through them, but ramming still hurts them. Every attack is announced first: red circles where shots will land, red lanes where a charge or a broadside will go. Each boss gets more dangerous as it loses health, and collapses in its own way when destroyed.
+**Bosses** arrive on a countdown (shown under the XP bar), one at a time: the countdown waits while a boss is on the field. A health bar floats above each boss. They are colossal, many times the size of your castle: the camera pulls back when one is near, and a red arrow points to it when it is out of sight. You cannot drive through them, but ramming still hurts them. Every attack is announced first: red circles where shots will land, red lanes where a charge or a broadside will go. Each boss gets more dangerous as it loses health, and collapses in its own way when destroyed.
 
 | Boss | Size | Attacks | When hurt |
 |---|---|---|---|
 | **The Siege Tower** | 18 m wide, 40 m tall | Lowers its ramp and sends out squads. Archers on top rain arrows. Pours burning oil all around its base if you hug it. | Sends bigger squads, with knights |
-| **Twin War Wagons** | 26 m long each | Flank you from opposite sides. The turret bombard tracks you. Gun ports open for a broadside to one side. | The survivor goes berserk and charges with its scythed wheels |
+| **The War Wagon** | 26 m long | Circles you while the turret bombard tracks you. Gun ports open for a broadside to one side. | Goes berserk and charges with its scythed wheels |
 | **The Iron Juggernaut** | 40 m long | Charges down a red lane, flattening its own troops. Swings its ram at anything in front. Blasts steam if you sit beside it. | Charges twice in a row, leaving burning oil behind |
 | **The Trebuchet Fortress** | 34 m wide, arm reaches 48 m | Keeps its distance. The arm swings and hurls a huge boulder, then treadwheels wind it back. Lobs fire pots. Ballistas on its towers guard it up close. | Each boulder splits into five |
 | **The Warlord's Citadel** | 64 m long, 76 m tall | Cannon turrets on four towers. The portcullis rises and knights ride out. | Great bombard fires a cross of shells and the citadel tramples forward; at last, fire rains from its burning spire |

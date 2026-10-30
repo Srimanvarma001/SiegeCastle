@@ -20,7 +20,7 @@ const ENDLESS_BOSS_INTERVAL: f32 = 90.0;
 /// Hard cap on troops alive, so the game stays smooth. Strength keeps growing.
 pub const MAX_ENEMIES: usize = 2200;
 
-/// The five story bosses, in order. War Wagons come as a pair.
+/// The five story bosses, in order. Only one is on the field at a time.
 pub const BOSSES: [EnemyKind; 5] = [
     EnemyKind::SiegeTower,
     EnemyKind::WarWagon,
@@ -129,6 +129,7 @@ fn run_director(
     mut shake: ResMut<Shake>,
     castle: Query<(&Transform, &Castle)>,
     enemies: Query<(), With<Enemy>>,
+    bosses: Query<(), With<crate::enemy::Boss>>,
 ) {
     let Ok((ctf, c)) = castle.single() else {
         return;
@@ -187,7 +188,11 @@ fn run_director(
         }
     }
 
-    // Bosses on a countdown.
+    // Bosses on a countdown. One boss at a time: the countdown waits while
+    // a boss is on the field, and starts again once it has fallen.
+    if !bosses.is_empty() {
+        return;
+    }
     d.boss_timer -= dt;
     if d.boss_timer > 0.0 {
         return;
@@ -206,18 +211,13 @@ fn run_director(
         return;
     };
     // Bosses are colossal: they appear well out of sight and roll in.
-    // The twin War Wagons come from opposite sides.
-    let count = if kind == EnemyKind::WarWagon { 2 } else { 1 };
     let angle = rng.0.random::<f32>() * std::f32::consts::TAU;
     let ext = kind.stats().radius + kind.half_len();
     let lim = MAP_HALF - ext - 2.0;
-    for i in 0..count {
-        let p = (cpos + Vec2::from_angle(angle + i as f32 * std::f32::consts::PI) * (view + ext + 25.0)).clamp(Vec2::splat(-lim), Vec2::splat(lim));
-        spawn_boss(&mut commands, &assets, kind, p, (cpos - p).to_angle(), boss_strength, i);
-    }
+    let p = (cpos + Vec2::from_angle(angle) * (view + ext + 25.0)).clamp(Vec2::splat(-lim), Vec2::splat(lim));
+    spawn_boss(&mut commands, &assets, kind, p, (cpos - p).to_angle(), boss_strength, 0);
     let s = crate::boss::spec(kind);
-    let verb = if count > 1 { "APPROACH" } else { "APPROACHES" };
-    banner.show(format!("{} {}", s.title, verb), s.hint, 5.0);
+    banner.show(format!("{} APPROACHES", s.title), s.hint, 5.0);
     shake.0 += 1.0;
 }
 

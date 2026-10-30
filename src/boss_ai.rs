@@ -455,11 +455,10 @@ fn tower(cx: &mut Ctx, b: &mut Boss, en: &Enemy, pos: Vec2) -> Drive {
 fn wagon(cx: &mut Ctx, b: &mut Boss, en: &Enemy, pos: Vec2, partner: Option<Vec2>) -> Drive {
     let to = cx.cpos - pos;
     let dist = to.length().max(0.01);
-    if !b.enraged && (partner.is_none() || en.hp < en.max_hp * 0.35) {
+    // Badly hurt, it goes berserk and charges with its scythed wheels.
+    if !b.enraged && en.hp < en.max_hp * 0.4 {
         b.enraged = true;
-        if partner.is_none() {
-            cx.banner.show("The last War Wagon goes berserk!", "Scythes out: it will charge you", 3.0);
-        }
+        cx.banner.show("The War Wagon goes berserk!", "Scythes out: it will charge you", 3.0);
     }
     let k = if b.enraged { 1.3 } else { 1.0 };
     // Circle the castle; the second wagon takes the opposite side.

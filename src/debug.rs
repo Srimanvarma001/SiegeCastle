@@ -363,12 +363,9 @@ fn cheats(
         if let Some(n) = cfg.boss
             && let Some(&kind) = BOSSES.get(n.saturating_sub(1))
         {
-            let count = if kind == crate::enemy::EnemyKind::WarWagon { 2 } else { 1 };
             let ext = kind.stats().radius + kind.half_len();
-            for i in 0..count {
-                let p = c + Vec2::from_angle(0.6 + i as f32 * std::f32::consts::PI) * (ext + 26.0);
-                crate::enemy::spawn_boss(&mut commands, &assets, kind, p, (c - p).to_angle(), director.strength, i);
-            }
+            let p = c + Vec2::from_angle(0.6) * (ext + 26.0);
+            crate::enemy::spawn_boss(&mut commands, &assets, kind, p, (c - p).to_angle(), director.strength, 0);
             director.boss_index = n.min(BOSSES.len());
             director.boss_timer = f32::INFINITY;
         }
