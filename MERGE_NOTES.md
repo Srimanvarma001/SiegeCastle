@@ -339,3 +339,7 @@ says "Iron Citadel".
   Troops and sheep have none. It is part of the HUD (sharp at any zoom),
   stays below the top bars, hides when the boss is off screen and is removed
   when the boss falls.
+  A benchmark run caught a crash in it: minimizing the window during a boss
+  fight made `f32::clamp` panic (its limits crossed at window size 0).
+  Reproduced by minimizing the game from a script, fixed, and re-tested
+  (minimized and restored twice mid-fight, no crash).

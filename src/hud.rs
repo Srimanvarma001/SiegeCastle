@@ -1209,6 +1209,8 @@ fn boss_tags(
         return;
     };
     let win = Vec2::new(window.width(), window.height());
+    // Minimized (or a tiny window): nothing to place the bars in.
+    let room = win.x >= TAG_W + 8.0 && win.y >= TAG_MIN_Y + TAG_H + 120.0;
     let to_ui = win / view.max(Vec2::ONE);
     let on_screen = |p: Vec2| p.x >= 0.0 && p.y >= 0.0 && p.x <= win.x && p.y <= win.y;
     for (tag_e, tag, mut node, mut vis) in &mut tags {
@@ -1222,7 +1224,7 @@ fn boss_tags(
         let project = |p: Vec3| cam.world_to_viewport(cam_gt, p).ok().map(|v| v * to_ui);
         let (top_ui, base_ui) = (project(top), project(base));
         // Shown while any of the boss is on screen; kept below the top HUD.
-        let shown = top_ui.is_some_and(on_screen) || base_ui.is_some_and(on_screen);
+        let shown = room && (top_ui.is_some_and(on_screen) || base_ui.is_some_and(on_screen));
         let want = if shown { Visibility::Inherited } else { Visibility::Hidden };
         if *vis != want {
             *vis = want;
@@ -1231,6 +1233,7 @@ fn boss_tags(
             continue;
         };
         if shown {
+            // `room` keeps these ranges valid (clamp panics if min > max).
             let x = (at.x - TAG_W / 2.0).clamp(4.0, win.x - TAG_W - 4.0);
             let y = (at.y - TAG_H - 6.0).clamp(TAG_MIN_Y, win.y - TAG_H - 120.0);
             node.left = Val::Px(x);
